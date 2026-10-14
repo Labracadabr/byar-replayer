@@ -3,7 +3,7 @@ import { DemoModel, DemoParser } from 'sdfz-demo-parser'
 import type { Preset, ReplayPlayer } from '@shared/types'
 
 /** Bump when the extracted fields change, so the library re-parses existing rows. */
-export const PARSER_VERSION = 2
+export const PARSER_VERSION = 3
 
 const SIM_FPS = 30
 
@@ -17,6 +17,8 @@ export interface DemoMeta {
   durationMs: number
   /** -1 if the game never started (lobby-only demo) */
   lastFrame: number
+  /** First keyframe; > 0 when the game was resumed from a saved game (then it can't be re-simulated) */
+  firstFrame: number
   preset: Preset
   winners: number[]
   players: ReplayPlayer[]
@@ -67,10 +69,14 @@ export async function readDemoMeta(path: string): Promise<DemoMeta> {
     excludePackets: [DemoModel.Packet.ID.NEWFRAME, DemoModel.Packet.ID.SYNCRESPONSE, DemoModel.Packet.ID.PLAYERINFO]
   })
   let lastFrame = -1
+  let firstFrame = -1
   // BAR broadcasts the in-game team colors in a COLORS Lua message; the parser applies it to humans only
   const luaColors = new Map<number, RGB>()
   parser.onPacket.add((packet) => {
-    if (packet.id === DemoModel.Packet.ID.KEYFRAME && packet.data) lastFrame = (packet.data as { frameNum: number }).frameNum
+    if (packet.id === DemoModel.Packet.ID.KEYFRAME && packet.data) {
+      lastFrame = (packet.data as { frameNum: number }).frameNum
+      if (firstFrame < 0) firstFrame = lastFrame
+    }
     const lua = packet.data as { data?: { name?: string; data?: unknown } } | undefined
     if (packet.id === DemoModel.Packet.ID.LUAMSG && lua?.data?.name === 'COLORS' && Array.isArray(lua.data.data)) {
       for (const c of lua.data.data as ({ teamID: number } & RGB)[]) luaColors.set(c.teamID, { r: c.r, g: c.g, b: c.b })
@@ -108,6 +114,7 @@ export async function readDemoMeta(path: string): Promise<DemoMeta> {
     startTime: new Date(info.meta.startTime).getTime(),
     durationMs: lastFrame > 0 ? Math.round((lastFrame / SIM_FPS) * 1000) : 0,
     lastFrame,
+    firstFrame,
     preset: classifyPreset(players),
     // GAMEOVER packet first, end-of-demo stats block as fallback
     winners: info.meta.winningAllyTeamIds?.length ? info.meta.winningAllyTeamIds : (demo.statistics?.winningAllyTeamIds ?? []),

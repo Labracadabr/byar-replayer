@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { isResumedGame, simStatusOf } from '@shared/sim-status'
 import type { Preset, ReplaySummary, ScanProgress, SimStatus } from '@shared/types'
 import { DetailPanel } from './DetailPanel'
 import { allyGroups, formatDate, formatDuration, PRESET_LABEL, winnerLabel } from './format'
@@ -12,7 +13,15 @@ const SIM_LABEL: Record<SimStatus, string> = {
 }
 
 function SimBadge({ r }: { r: ReplaySummary }): React.JSX.Element {
-  const text = r.simStatus === 'running' ? `Simulating ${Math.round(r.simProgress * 100)}%` : SIM_LABEL[r.simStatus]
+  if (r.simStatus === 'none' && isResumedGame(r))
+    return (
+      <span className="badge sim-none" title="Continues a saved game: can't be re-simulated">
+        Saved game
+      </span>
+    )
+  let text = SIM_LABEL[r.simStatus]
+  if (r.simStatus === 'running')
+    text = r.simStage === 'simulating' ? `Simulating ${Math.round(r.simProgress * 100)}%` : r.simStage === 'deps' ? 'Preparing…' : 'Loading…'
   return <span className={`badge sim-${r.simStatus}`}>{text}</span>
 }
 
@@ -77,9 +86,20 @@ export function LibraryView({ onOpenSettings }: { onOpenSettings(): void }): Rea
     reload()
     const off1 = window.api.onLibraryChanged(reload)
     const off2 = window.api.onScanProgress(setScan)
+    // patch the row in place on job progress instead of reloading the whole list
+    const off3 = window.api.onJobUpdate((job) =>
+      setReplays((rows) =>
+        rows.map((r) => {
+          if (r.id !== job.replayId) return r
+          const sim = simStatusOf(job)
+          return { ...r, simStatus: sim.status, simProgress: sim.progress, simStage: job.status === 'running' ? job.stage : null }
+        })
+      )
+    )
     return () => {
       off1()
       off2()
+      off3()
     }
   }, [reload])
 
@@ -128,6 +148,15 @@ export function LibraryView({ onOpenSettings }: { onOpenSettings(): void }): Rea
           </button>
         )}
         <span className="spacer" />
+        {(() => {
+          const running = replays.filter((r) => r.simStatus === 'running').length
+          const queued = replays.filter((r) => r.simStatus === 'queued').length
+          return running + queued > 0 ? (
+            <span className="badge sim-running">
+              {running} simulating{queued > 0 && ` · ${queued} queued`}
+            </span>
+          ) : null
+        })()}
         <span className="muted">
           {scan.running ? `Scanning ${scan.done}/${scan.total}…` : `${visible.length} of ${replays.length} replays`}
         </span>

@@ -6,6 +6,7 @@ import { openDb, type Db } from './db'
 import { DepsResolver } from './deps/resolver'
 import { Library } from './library'
 import { SettingsStore } from './settings'
+import { SimQueue } from './sim/queue'
 
 let win: BrowserWindow | null = null
 let settings: SettingsStore
@@ -13,6 +14,7 @@ let db: Db | null = null
 let dbPath = ''
 let library: Library | null = null
 let deps: DepsResolver
+let queue: SimQueue | null = null
 
 function send(channel: string, ...args: unknown[]): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
@@ -26,6 +28,7 @@ function startServices(): void {
   mkdirSync(s.workDir, { recursive: true })
   const wantedDb = join(s.workDir, 'library.sqlite')
   if (wantedDb !== dbPath) {
+    queue?.stop()
     library?.stopWatching()
     db?.close()
     db = openDb(wantedDb)
@@ -33,6 +36,11 @@ function startServices(): void {
     library = new Library(db, s.demoDirs)
     library.on('changed', () => send('library:changed'))
     library.on('progress', (p) => send('library:scanProgress', p))
+    queue = new SimQueue(db, library, deps, () => settings.get())
+    queue.on('job', (job) => send('sim:job', job))
+    queue.on('changed', () => send('library:changed'))
+    queue.on('log', (line: string) => console.log('[sim]', line))
+    queue.start()
   }
   library!.setDemoDirs(s.demoDirs)
   void library!.scan()
@@ -43,6 +51,11 @@ function depsRequest(id: number): { engineVersion: string; gameVersion: string; 
   if (!r) throw new Error(`Unknown replay ${id}`)
   if (r.parseError) throw new Error(`Replay can't be read: ${r.parseError}`)
   return { engineVersion: r.engineVersion, gameVersion: r.gameVersion, mapName: r.mapName }
+}
+
+function requireQueue(): SimQueue {
+  if (!queue) throw new Error('Simulation queue not available: fix the settings first')
+  return queue
 }
 
 function requireLibrary(): Library {
@@ -83,6 +96,10 @@ function registerIpc(): void {
     const current = settings.get().mapDirs
     return current.includes(dir) ? settings.state() : settings.update({ mapDirs: [...current, dir] })
   })
+  ipcMain.handle('sim:simulate', (_e, id: number) => requireQueue().enqueue(id))
+  ipcMain.handle('sim:cancel', (_e, id: number) => requireQueue().cancel(id))
+  ipcMain.handle('sim:deleteData', (_e, id: number) => requireQueue().deleteData(id))
+  ipcMain.handle('sim:getJob', (_e, id: number) => requireQueue().latestJob(id))
   ipcMain.handle('shell:showInFolder', (_e, path: string) => shell.showItemInFolder(path))
 }
 
@@ -110,6 +127,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  queue?.stop() // running sims are re-queued on next start
   library?.stopWatching()
   db?.close()
   app.quit()

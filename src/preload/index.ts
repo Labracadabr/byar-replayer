@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Api, DepState, ScanProgress } from '@shared/types'
+import type { Api, DepState, JobInfo, ScanProgress } from '@shared/types'
 
 function subscribe<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
   const listener = (_e: Electron.IpcRendererEvent, ...args: unknown[]): void => cb(...(args as T))
@@ -21,6 +21,11 @@ const api: Api = {
   ensureDeps: (id) => ipcRenderer.invoke('deps:ensure', id),
   addMapFolder: () => ipcRenderer.invoke('deps:addMapFolder'),
   onDepProgress: (cb) => subscribe<[DepState]>('deps:progress', cb),
+  simulate: (id) => ipcRenderer.invoke('sim:simulate', id),
+  cancelSim: (id) => ipcRenderer.invoke('sim:cancel', id),
+  deleteSimData: (id) => ipcRenderer.invoke('sim:deleteData', id),
+  getJob: (id) => ipcRenderer.invoke('sim:getJob', id),
+  onJobUpdate: (cb) => subscribe<[JobInfo]>('sim:job', cb),
   onLibraryChanged: (cb) => subscribe('library:changed', cb),
   onScanProgress: (cb) => subscribe<[ScanProgress]>('library:scanProgress', cb)
 }

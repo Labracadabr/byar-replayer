@@ -109,3 +109,34 @@ On first load the engine checksums the whole game archive (`[CAS::GASCB]`, ~3 GB
 result in `<write-dir>/cache/ArchiveCache20.lua`. With a fresh write dir per job and a cold disk cache, this took
 **78.7 s**; with the cache present it took **29 ms** (whole short-demo run: 125 s → 33 s). The sim runner must keep
 one shared archive cache and copy it into each job's write dir (and back after the job).
+
+## Simulation jobs (milestone 3)
+
+`src/main/sim/runner.ts` runs one job, and `src/main/sim/queue.ts` schedules jobs (stored in SQLite).
+
+- **Recorder widget:** `resources/widget/brv_recorder.lua`. The runner fills in its `CONFIG` line and installs it into
+  the job's write dir. It samples all units every 15 frames and projectiles every 5, and logs create / finish / destroy
+  (with attacker) / give / game-over events. Output format: [raw-format.md](raw-format.md). It also dumps
+  UnitDefs/WeaponDefs once per game version into `<work>/cache/unitdefs/`.
+- **Progress:** comes from the `[f=<frame>]` prefix of any stdout line (the widget echoes every 300 frames). The total
+  is the demo's last keyframe.
+- **Success:** the raw file ends with `DONE <reason> <frame>`. The exit code is ignored.
+- **Failures:** if the engine exits without `DONE`, or a watchdog fires (15 min loading, 3 min without a new frame,
+  or 2 min of game time past the demo's end), the job fails with a message plus the last 80 stdout lines. The
+  engine's own `infolog.txt` is buffered and loses its end when the process dies, so the runner keeps a stdout ring
+  buffer instead. Known headless noise (`DrawScreen`/`RenderToTexture`/shader/sound errors) is never presented as
+  the cause. The failed job's write dir is kept for inspection until a retry succeeds or the user deletes the data.
+- **Desync:** any `[DESYNC WARNING]` means the simulation no longer matches the game. The engine is stopped at once
+  and the job fails; partial data is not kept.
+- **Saved games:** a demo of a game that was loaded from a save starts at the save's frame (two local demos start at
+  frame 47472). The save's state isn't in the demo, so the re-simulation desyncs right away. The library detects
+  these by their first keyframe (> 300) and refuses to simulate them ("Saved game").
+- **Parallelism:** auto = `min(cores − 1, RAM / 6 GB)`, because a big 8v8 peaked around 5 GB. On this machine
+  (18 cores, 23.5 GB) that's 3.
+- **App restarts:** jobs left `running` are re-queued on start. Leftover `spring-headless` processes are killed by their
+  stored pid (after checking the image name). A hard-killed app didn't leave orphans in testing (the engine dies
+  with its stdout pipe), but the check stays as a safety net.
+
+Measured with 3 parallel jobs (cold archive cache on the first run): 8v8 SD-129, 17 min → 333 s; aborted 8v8
+Supreme Isthmus, 7.5 min → 182 s; 2-minute game → 72 s. Alone: 6-team Death Valley, 40 min → 512 s. Raw sizes:
+75 MB (8v8, 17 min), 181 MB (40 min, 6 teams); milestone 4 compresses these.

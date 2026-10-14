@@ -56,3 +56,12 @@ describe.skipIf(!existsSync(DEMOS))('team colors', () => {
     for (const a of ais) expect(a.color).not.toBe('#888888')
   })
 })
+
+describe.skipIf(!existsSync(DEMOS))('saved-game detection', () => {
+  it('flags demos that continue a saved game', async () => {
+    const resumed = await readDemoMeta(DEMOS + '2026-01-11_16-01-47-002_FolsomDamR 1.17_2025.06.12.sdfz')
+    expect(resumed.firstFrame).toBe(47472)
+    const normal = await readDemoMeta(finished)
+    expect(normal.firstFrame).toBe(0)
+  })
+})

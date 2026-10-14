@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReplayDetail } from '@shared/types'
 import { DepsSection } from './DepsSection'
+import { SimSection } from './SimSection'
 import { allyGroups, formatDate, formatDuration, PRESET_LABEL } from './format'
 
 interface Props {
@@ -82,17 +83,7 @@ export function DetailPanel({ id, onChanged, onClose }: Props): React.JSX.Elemen
       {r.parseError && <div className="error-box">Could not read this replay: {r.parseError}</div>}
       {r.lastFrame < 0 && !r.parseError && <div className="warn-box">This game never started (lobby only).</div>}
 
-      <div className="actions">
-        <button type="button" className="primary" disabled title="Coming in milestone 3">
-          Simulate
-        </button>
-        <button type="button" disabled title="Coming in milestone 5">
-          Open player
-        </button>
-        <button type="button" onClick={() => void window.api.showInFolder(r.path)}>
-          Show in folder
-        </button>
-      </div>
+      <SimSection replay={r} onChanged={onChanged} />
 
       {!r.parseError && r.lastFrame >= 0 && (
         <section>

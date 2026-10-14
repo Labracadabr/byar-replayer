@@ -50,6 +50,22 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX sim_jobs_replay ON sim_jobs(replay_id);
   CREATE INDEX sim_jobs_status ON sim_jobs(status);
+  `,
+  // 2: job stages and outputs
+  `
+  ALTER TABLE sim_jobs ADD COLUMN stage TEXT;           -- deps | loading | simulating | finalizing
+  ALTER TABLE sim_jobs ADD COLUMN warning TEXT;
+  ALTER TABLE sim_jobs ADD COLUMN raw_path TEXT;        -- recorder output (converted to stream_path in milestone 4)
+  ALTER TABLE sim_jobs ADD COLUMN end_reason TEXT;      -- gameover | endofdemo | overrun
+  ALTER TABLE sim_jobs ADD COLUMN work_dir TEXT;        -- engine write dir, kept on failure for inspection
+  `,
+  // 3: first keyframe (> 0 = resumed from a saved game)
+  `
+  ALTER TABLE replays ADD COLUMN first_frame INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 4: engine process id, to clean up orphans after an app crash
+  `
+  ALTER TABLE sim_jobs ADD COLUMN pid INTEGER;
   `
 ]
 

@@ -35,6 +35,28 @@ export type Preset = 'duel' | 'team' | 'ffa' | 'teamffa' | 'pve' | 'unknown'
 
 export type SimStatus = 'none' | 'queued' | 'running' | 'ready' | 'failed'
 
+export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+export type JobStage = 'deps' | 'loading' | 'simulating' | 'finalizing'
+
+export interface JobInfo {
+  jobId: number
+  replayId: number
+  status: JobStatus
+  stage: JobStage | null
+  frame: number
+  totalFrames: number
+  error: string | null
+  warning: string | null
+  /** last lines of the engine infolog, for failed jobs */
+  logTail: string | null
+  endReason: string | null
+  rawPath: string | null
+  workDir: string | null
+  createdAt: number
+  startedAt: number | null
+  finishedAt: number | null
+}
+
 export interface ReplayPlayer {
   name: string
   teamId: number
@@ -59,6 +81,8 @@ export interface ReplaySummary {
   /** ms of actual game time (from last keyframe; works for aborted games) */
   durationMs: number
   lastFrame: number
+  /** > 0 when the replay continues a saved game: such games can't be re-simulated */
+  firstFrame: number
   preset: Preset
   winners: number[]
   players: ReplayPlayer[]
@@ -67,6 +91,7 @@ export interface ReplaySummary {
   favorite: boolean
   note: string
   simStatus: SimStatus
+  simStage: JobStage | null
   simProgress: number
 }
 
@@ -121,6 +146,13 @@ export interface Api {
   /** Lets the user add a folder that contains the missing map */
   addMapFolder(): Promise<SettingsState | null>
   onDepProgress(cb: (st: DepState) => void): () => void
+  /** Queue a (re-)simulation; returns the job */
+  simulate(id: number): Promise<JobInfo>
+  cancelSim(id: number): Promise<void>
+  /** Remove recordings and job history for a replay */
+  deleteSimData(id: number): Promise<void>
+  getJob(id: number): Promise<JobInfo | null>
+  onJobUpdate(cb: (job: JobInfo) => void): () => void
   onLibraryChanged(cb: () => void): () => void
   onScanProgress(cb: (p: ScanProgress) => void): () => void
 }

@@ -2,7 +2,8 @@
 import { EventEmitter } from 'node:events'
 import { readdirSync, realpathSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
-import type { Preset, ReplayDetail, ReplayPlayer, ReplaySummary, ScanProgress, SimStatus } from '@shared/types'
+import { simStatusOf } from '@shared/sim-status'
+import type { JobInfo, JobStage, Preset, ReplayDetail, ReplayPlayer, ReplaySummary, ScanProgress } from '@shared/types'
 import type { Db } from './db'
 import { PARSER_VERSION, readDemoMeta } from './demo-meta'
 
@@ -19,6 +20,7 @@ interface ReplayRow {
   start_time: number
   duration_ms: number
   last_frame: number
+  first_frame: number
   preset: string
   winners_json: string
   players_json: string
@@ -30,31 +32,20 @@ interface ReplayRow {
   job_status: string | null
   job_frame: number | null
   job_total: number | null
+  job_stage: string | null
 }
 
 const SELECT = `
-  SELECT r.*, j.status AS job_status, j.frame AS job_frame, j.total_frames AS job_total
+  SELECT r.*, j.status AS job_status, j.frame AS job_frame, j.total_frames AS job_total, j.stage AS job_stage
   FROM replays r
   LEFT JOIN sim_jobs j ON j.id = (SELECT id FROM sim_jobs WHERE replay_id = r.id ORDER BY id DESC LIMIT 1)
   WHERE r.missing = 0`
 
-function simStatus(row: ReplayRow): { status: SimStatus; progress: number } {
-  switch (row.job_status) {
-    case 'queued':
-      return { status: 'queued', progress: 0 }
-    case 'running':
-      return { status: 'running', progress: row.job_total ? (row.job_frame ?? 0) / row.job_total : 0 }
-    case 'done':
-      return { status: 'ready', progress: 1 }
-    case 'failed':
-      return { status: 'failed', progress: 0 }
-    default:
-      return { status: 'none', progress: 0 }
-  }
-}
 
 function toSummary(row: ReplayRow): ReplaySummary {
-  const sim = simStatus(row)
+  const sim = simStatusOf(
+    row.job_status ? { status: row.job_status as JobInfo['status'], frame: row.job_frame ?? 0, totalFrames: row.job_total ?? 0 } : null
+  )
   return {
     id: row.id,
     path: row.path,
@@ -67,6 +58,7 @@ function toSummary(row: ReplayRow): ReplaySummary {
     startTime: row.start_time,
     durationMs: row.duration_ms,
     lastFrame: row.last_frame,
+    firstFrame: row.first_frame,
     preset: row.preset as Preset,
     winners: JSON.parse(row.winners_json) as number[],
     players: JSON.parse(row.players_json) as ReplayPlayer[],
@@ -75,6 +67,7 @@ function toSummary(row: ReplayRow): ReplaySummary {
     favorite: row.favorite === 1,
     note: row.note,
     simStatus: sim.status,
+    simStage: row.job_status === 'running' ? (row.job_stage as JobStage | null) : null,
     simProgress: sim.progress
   }
 }
@@ -252,6 +245,7 @@ export class Library extends EventEmitter {
         start_time: m.startTime,
         duration_ms: m.durationMs,
         last_frame: m.lastFrame,
+        first_frame: Math.max(0, m.firstFrame),
         preset: m.preset,
         winners_json: JSON.stringify(m.winners),
         players_json: JSON.stringify(m.players),
