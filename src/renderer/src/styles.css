@@ -359,3 +359,60 @@ details summary {
 .settings-actions {
   margin-top: 20px;
 }
+
+/* dependencies */
+.dep {
+  display: flex;
+  gap: 8px;
+  padding: 5px 0;
+}
+.dep-icon {
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+}
+.dep-ok .dep-icon {
+  color: var(--green);
+}
+.dep-missing .dep-icon,
+.dep-downloading .dep-icon {
+  color: var(--accent);
+}
+.dep-failed .dep-icon,
+.dep-unavailable .dep-icon,
+.dep-failed .dep-msg,
+.dep-unavailable .dep-msg {
+  color: var(--red);
+}
+.dep-body {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+.dep-kind {
+  color: var(--muted);
+}
+.bar {
+  height: 4px;
+  margin-top: 4px;
+  background: var(--bg3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.bar > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+.bar.indeterminate > div {
+  width: 30% !important;
+  animation: indeterminate 1.2s infinite linear;
+}
+@keyframes indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}

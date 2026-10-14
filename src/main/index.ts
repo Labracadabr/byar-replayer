@@ -1,8 +1,9 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import type { Settings, SettingsState } from '@shared/types'
+import type { ReplayDeps, Settings, SettingsState } from '@shared/types'
 import { openDb, type Db } from './db'
+import { DepsResolver } from './deps/resolver'
 import { Library } from './library'
 import { SettingsStore } from './settings'
 
@@ -11,6 +12,7 @@ let settings: SettingsStore
 let db: Db | null = null
 let dbPath = ''
 let library: Library | null = null
+let deps: DepsResolver
 
 function send(channel: string, ...args: unknown[]): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
@@ -36,6 +38,13 @@ function startServices(): void {
   void library!.scan()
 }
 
+function depsRequest(id: number): { engineVersion: string; gameVersion: string; mapName: string } {
+  const r = requireLibrary().get(id)
+  if (!r) throw new Error(`Unknown replay ${id}`)
+  if (r.parseError) throw new Error(`Replay can't be read: ${r.parseError}`)
+  return { engineVersion: r.engineVersion, gameVersion: r.gameVersion, mapName: r.mapName }
+}
+
 function requireLibrary(): Library {
   if (!library) throw new Error('Library not available: fix the settings first')
   return library
@@ -57,6 +66,23 @@ function registerIpc(): void {
   ipcMain.handle('library:setFavorite', (_e, id: number, fav: boolean) => requireLibrary().setFavorite(id, fav))
   ipcMain.handle('library:setNote', (_e, id: number, note: string) => requireLibrary().setNote(id, note))
   ipcMain.handle('library:rescan', () => requireLibrary().scan())
+  ipcMain.handle('deps:check', (_e, id: number): ReplayDeps => deps.check(depsRequest(id)))
+  ipcMain.handle('deps:ensure', async (_e, id: number): Promise<ReplayDeps> => {
+    const req = depsRequest(id)
+    try {
+      await deps.ensure(req)
+    } catch {
+      // failures are recorded per dependency and returned by check()
+    }
+    return deps.check(req)
+  })
+  ipcMain.handle('deps:addMapFolder', async (): Promise<SettingsState | null> => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Folder containing map archives', properties: ['openDirectory'] })
+    if (r.canceled) return null
+    const dir = r.filePaths[0]
+    const current = settings.get().mapDirs
+    return current.includes(dir) ? settings.state() : settings.update({ mapDirs: [...current, dir] })
+  })
   ipcMain.handle('shell:showInFolder', (_e, path: string) => shell.showItemInFolder(path))
 }
 
@@ -75,6 +101,9 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   settings = new SettingsStore(app.getPath('userData'))
+  deps = new DepsResolver(() => settings.get())
+  deps.on('progress', (st) => send('deps:progress', st))
+  deps.on('log', (line: string) => console.log('[deps]', line))
   registerIpc()
   createWindow()
   startServices()

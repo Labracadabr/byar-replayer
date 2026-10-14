@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReplayDetail } from '@shared/types'
+import { DepsSection } from './DepsSection'
 import { allyGroups, formatDate, formatDuration, PRESET_LABEL } from './format'
 
 interface Props {
@@ -92,6 +93,13 @@ export function DetailPanel({ id, onChanged, onClose }: Props): React.JSX.Elemen
           Show in folder
         </button>
       </div>
+
+      {!r.parseError && r.lastFrame >= 0 && (
+        <section>
+          <h3>Requirements</h3>
+          <DepsSection replayId={r.id} />
+        </section>
+      )}
 
       <section>
         <h3>Players</h3>

@@ -81,3 +81,31 @@ set SPRING_DATADIR=D:\Dmitrii\Beyond-All-Reason\data
 A direct file write from the widget (`io.open` in LuaUI) works and is the most efficient choice. Progress is reported through
 `Spring.Echo("[BRV] ...")` lines, which arrive on stdout prefixed with `[f=<frame>]`. The runner parses those
 for live progress. stdout is block-buffered, so updates arrive in bursts; that's fine for a progress bar.
+
+## Dependency resolution (milestone 2)
+
+The engine, game and map must exactly match the replay. `src/main/deps/` resolves them in this order:
+
+| Dependency | Local lookup | Download source | Written to |
+|---|---|---|---|
+| Engine `2025.04.08` | `<bar>/engine/recoil_<v>/spring-headless.exe`, then `<engineCache>/recoil_<v>/` | `github.com/beyond-all-reason/RecoilEngine/releases/download/<v>/recoil_<v>_amd64-windows.7z` (same URL the BAR launcher uses), extracted with bundled 7za | engine cache (work dir) |
+| Game `Beyond All Reason test-…` | name → `.sdp` md5 via `rapid/*/*/versions.gz` (BAR's, plus ours), then `packages/<md5>.sdp` in BAR or our data dir | rapid CDN: `repos-cdn.beyondallreason.dev/<repo>/packages/<md5>.sdp` and `/pool/xx/<rest>.gz` | `<work>/data` (own pool) |
+| Map `Death Valley v1.0.1` | map folders by BAR naming (`death_valley_v1.0.1.sd7`, case-insensitive) or by the exact file name from the API | `files-cdn.beyondallreason.dev/find?category=map&springname=<name>` → mirror URL + md5; fallback: Google Drive API v3 on BAR's maps folder (needs API key) | first map folder |
+
+- **The BAR install stays untouched** apart from maps. Game downloads go into our own data dir. Pool files BAR
+  already has are **hardlinked** (same volume, so no extra space). A version near an installed one needed 14 new
+  files (128 KB); 17,125 were hardlinked. Different volume: falls back to copying.
+- The engine finds a game in any `SPRING_DATADIR` entry, but its pool must sit next to its `packages/`. Verified by
+  running a demo with `SPRING_DATADIR` set to *only* a hardlinked data dir.
+- Pool files are gzip; their name is the md5 of the *decompressed* content. Each download is verified. The `.sdp`
+  is written last, so its presence means the package is complete. Downloaded games are also recorded in
+  `<data>/brv-installed-games.json`, so they stay findable without a matching `versions.gz`.
+- Old test versions (even `test-20001`) are still on the rapid CDN. Pre-Recoil engines (non `YYYY.MM.DD` versions)
+  are reported as not downloadable.
+
+## Gotcha: archive checksum cache (important for job startup)
+
+On first load the engine checksums the whole game archive (`[CAS::GASCB]`, ~3 GB of pool reads) and caches the
+result in `<write-dir>/cache/ArchiveCache20.lua`. With a fresh write dir per job and a cold disk cache, this took
+**78.7 s**; with the cache present it took **29 ms** (whole short-demo run: 125 s → 33 s). The sim runner must keep
+one shared archive cache and copy it into each job's write dir (and back after the job).

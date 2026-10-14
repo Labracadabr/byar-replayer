@@ -82,6 +82,27 @@ export interface ScanProgress {
   current?: string
 }
 
+export type DepKind = 'engine' | 'game' | 'map'
+
+/** ok: installed · missing: can be downloaded · downloading · failed: download failed · unavailable: can't be fetched */
+export type DepStatus = 'ok' | 'missing' | 'downloading' | 'failed' | 'unavailable'
+
+export interface DepState {
+  kind: DepKind
+  name: string
+  status: DepStatus
+  path?: string
+  message?: string
+  /** 0..1, or -1 when unknown */
+  progress?: number
+}
+
+export interface ReplayDeps {
+  engine: DepState
+  game: DepState
+  map: DepState
+}
+
 /** API exposed to the renderer on window.api */
 export interface Api {
   getSettings(): Promise<SettingsState>
@@ -93,6 +114,13 @@ export interface Api {
   setNote(id: number, note: string): Promise<void>
   rescan(): Promise<void>
   showInFolder(path: string): Promise<void>
+  /** Offline check of engine/game/map for a replay */
+  checkDeps(id: number): Promise<ReplayDeps>
+  /** Download whatever is missing; resolves with the final state (failures are reported in the states) */
+  ensureDeps(id: number): Promise<ReplayDeps>
+  /** Lets the user add a folder that contains the missing map */
+  addMapFolder(): Promise<SettingsState | null>
+  onDepProgress(cb: (st: DepState) => void): () => void
   onLibraryChanged(cb: () => void): () => void
   onScanProgress(cb: (p: ScanProgress) => void): () => void
 }

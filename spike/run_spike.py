@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from demo_header import read_header, last_frame  # noqa: E402
 
 BAR_DATA = r"D:\Dmitrii\Beyond-All-Reason\data"
+DATA_DIRS = os.environ.get("SPIKE_DATADIRS", BAR_DATA)  # ";"-separated SPRING_DATADIR override
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASCII_HOME = r"C:\Users\Public"
 
@@ -47,7 +48,7 @@ def main():
     for k in ("USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA"):
         env[k] = ASCII_HOME
     env["HOMEPATH"] = r"\Users\Public"
-    env["SPRING_DATADIR"] = BAR_DATA
+    env["SPRING_DATADIR"] = DATA_DIRS
 
     cmd = [exe, "--write-dir", work, "--config", cfg, "--only-local", "--nocolor", local_demo]
     print(" ".join(cmd))
