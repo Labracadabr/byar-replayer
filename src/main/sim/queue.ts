@@ -10,6 +10,10 @@ import type { JobInfo, JobStage, JobStatus, Settings } from '@shared/types'
 import type { Db } from '../db'
 import type { DepsResolver } from '../deps/resolver'
 import type { Library } from '../library'
+import convertWorkerPath from '../stream/convert-worker?modulePath'
+import type { ConvertJob, ConvertMessage } from '../stream/convert-worker'
+import type { ConvertResult } from '../stream/convert'
+import { Worker } from 'node:worker_threads'
 import { runSim, SimError } from './runner'
 
 const PROJECTILE_INTERVAL = 5
@@ -29,6 +33,18 @@ function killIfEngine(pid: number): void {
   }
 }
 
+/** Raw recordings are 70–180 MB of text; set BRV_KEEP_RAW=1 to keep them after conversion (debugging). */
+const KEEP_RAW = process.env.BRV_KEEP_RAW === '1'
+
+function convertInWorker(job: ConvertJob): Promise<ConvertResult> {
+  return new Promise((resolve, reject) => {
+    const w = new Worker(convertWorkerPath, { workerData: job })
+    w.once('message', (m: ConvertMessage) => (m.ok ? resolve(m.result) : reject(new Error(`Conversion failed: ${m.error}`))))
+    w.once('error', reject)
+    w.once('exit', (code) => code !== 0 && reject(new Error(`Converter exited with code ${code}`)))
+  })
+}
+
 export function autoConcurrency(): number {
   return Math.max(1, Math.min(cpus().length - 1, Math.floor(totalmem() / RAM_PER_SIM)))
 }
@@ -45,6 +61,7 @@ interface JobRow {
   log_tail: string | null
   end_reason: string | null
   raw_path: string | null
+  stream_path: string | null
   work_dir: string | null
   created_at: number
   started_at: number | null
@@ -65,6 +82,7 @@ function toInfo(r: JobRow): JobInfo {
     logTail: r.log_tail,
     endReason: r.end_reason,
     rawPath: r.raw_path,
+    streamPath: r.stream_path,
     workDir: r.work_dir,
     createdAt: r.created_at,
     startedAt: r.started_at,
@@ -93,6 +111,10 @@ export class SimQueue extends EventEmitter {
     }[]
     for (const { pid } of stale) killIfEngine(pid)
     this.db.prepare(`UPDATE sim_jobs SET status = 'queued', stage = NULL, frame = 0, pid = NULL WHERE status = 'running'`).run()
+    // recordings made before the stream converter existed (or interrupted during conversion) only need converting
+    this.db
+      .prepare(`UPDATE sim_jobs SET status = 'queued' WHERE status = 'done' AND stream_path IS NULL AND raw_path IS NOT NULL`)
+      .run()
     this.pump()
   }
 
@@ -206,47 +228,63 @@ export class SimQueue extends EventEmitter {
     try {
       if (!replay) throw new Error('Replay no longer in the library.')
       if (!existsSync(replay.path)) throw new Error(`Replay file is missing: ${replay.path}`)
-      const deps = await this.deps.ensure(
-        { engineVersion: replay.engineVersion, gameVersion: replay.gameVersion, mapName: replay.mapName },
-        ac.signal
-      )
-      if (ac.signal.aborted) throw new SimError('Cancelled', '')
-      this.update(jobId, { stage: 'loading', work_dir: jobDir })
-      const unitDefsPath = this.unitDefsPath(replay.gameVersion)
-      const result = await runSim({
-        jobDir,
-        demoPath: replay.path,
-        deps,
-        asciiHome: join(s.workDir, 'home'),
-        archiveCacheDir: join(s.workDir, 'cache', 'engine'),
-        sampleInterval: s.sampleInterval,
-        projectileInterval: PROJECTILE_INTERVAL,
-        totalFrames: replay.lastFrame,
-        unitDefsPath: existsSync(unitDefsPath) ? '' : unitDefsPath,
-        signal: ac.signal,
-        onProgress: (stage, frame) => this.progress(jobId, stage, frame),
-        onSpawn: (pid) => this.db.prepare('UPDATE sim_jobs SET pid = ? WHERE id = ?').run(pid, jobId)
-      })
-      this.update(jobId, { stage: 'finalizing' })
       const outDir = this.recordingDir(job.replayId)
-      rmSync(outDir, { recursive: true, force: true })
-      mkdirSync(outDir, { recursive: true })
-      const raw = join(outDir, 'raw.txt')
-      renameSync(result.rawPath, raw)
-      rmSync(jobDir, { recursive: true, force: true })
-      this.clearOldWorkDirs(job.replayId, jobId)
+      let raw = job.rawPath && existsSync(job.rawPath) ? job.rawPath : null
+      let endReason = job.endReason ?? 'unknown'
+      let warning = job.warning
+      let lastFrame = job.frame
+      if (!raw) {
+        const deps = await this.deps.ensure(
+          { engineVersion: replay.engineVersion, gameVersion: replay.gameVersion, mapName: replay.mapName },
+          ac.signal
+        )
+        if (ac.signal.aborted) throw new SimError('Cancelled', '')
+        this.update(jobId, { stage: 'loading', work_dir: jobDir })
+        const unitDefsPath = this.unitDefsPath(replay.gameVersion)
+        const result = await runSim({
+          jobDir,
+          demoPath: replay.path,
+          deps,
+          asciiHome: join(s.workDir, 'home'),
+          archiveCacheDir: join(s.workDir, 'cache', 'engine'),
+          sampleInterval: s.sampleInterval,
+          projectileInterval: PROJECTILE_INTERVAL,
+          totalFrames: replay.lastFrame,
+          unitDefsPath: existsSync(unitDefsPath) ? '' : unitDefsPath,
+          signal: ac.signal,
+          onProgress: (stage, frame) => this.progress(jobId, stage, frame),
+          onSpawn: (pid) => this.db.prepare('UPDATE sim_jobs SET pid = ? WHERE id = ?').run(pid, jobId)
+        })
+        rmSync(outDir, { recursive: true, force: true })
+        mkdirSync(outDir, { recursive: true })
+        raw = join(outDir, 'raw.txt')
+        renameSync(result.rawPath, raw)
+        rmSync(jobDir, { recursive: true, force: true })
+        this.clearOldWorkDirs(job.replayId, jobId)
+        endReason = result.endReason
+        warning = result.warning
+        lastFrame = result.lastFrame
+        this.emit('log', `job ${jobId} simulated in ${(result.elapsedMs / 1000).toFixed(0)}s (${result.endReason})`)
+      }
+      // the raw recording is kept until the stream exists, so a crash here only repeats the conversion
+      this.update(jobId, { stage: 'finalizing', raw_path: raw, end_reason: endReason, warning, frame: lastFrame, work_dir: null, pid: null })
+      const streamPath = join(outDir, 'game.brvs')
+      const conv = await convertInWorker({
+        demoPath: replay.path,
+        rawPath: raw,
+        unitDefsPath: this.unitDefsPath(replay.gameVersion),
+        outPath: streamPath,
+        gameId: replay.gameId
+      })
+      if (!KEEP_RAW) rmSync(raw, { force: true })
       this.update(jobId, {
         status: 'done',
         stage: null,
-        frame: result.lastFrame,
-        raw_path: raw,
-        end_reason: result.endReason,
-        warning: result.warning,
-        work_dir: null,
-        pid: null,
+        stream_path: streamPath,
+        raw_path: KEEP_RAW ? raw : null,
         finished_at: Date.now()
       })
-      this.emit('log', `job ${jobId} done in ${(result.elapsedMs / 1000).toFixed(0)}s (${result.endReason})`)
+      this.emit('log', `job ${jobId}: stream ${(conv.bytes / 1024 / 1024).toFixed(1)} MB in ${conv.elapsedMs} ms`)
     } catch (e) {
       const cancelled = ac.signal.aborted
       const message = e instanceof Error ? e.message : String(e)

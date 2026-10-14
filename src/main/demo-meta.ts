@@ -1,5 +1,6 @@
 // Extracts library metadata from an .sdfz using sdfz-demo-parser (offline; no API needed).
 import { DemoModel, DemoParser } from 'sdfz-demo-parser'
+import type { ChatLine } from '@shared/stream/format'
 import type { Preset, ReplayPlayer } from '@shared/types'
 
 /** Bump when the extracted fields change, so the library re-parses existing rows. */
@@ -123,4 +124,17 @@ export async function readDemoMeta(path: string): Promise<DemoMeta> {
     gameSettings: info.gameSettings ?? {},
     mapSettings: info.mapSettings ?? {}
   }
+}
+
+/** Chat log with game-time frames (the recorder doesn't capture chat; the demo has it with exact times). */
+export async function readDemoChat(path: string): Promise<ChatLine[]> {
+  const parser = new DemoParser({ includePackets: [] })
+  const demo = await parser.parseDemo(path)
+  return (demo.chatlog ?? []).map((c) => ({
+    frame: Math.round((c.timeMs * SIM_FPS) / 1000),
+    playerId: c.playerId,
+    name: c.name,
+    type: c.type,
+    message: c.message
+  }))
 }

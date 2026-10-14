@@ -51,6 +51,8 @@ export interface JobInfo {
   logTail: string | null
   endReason: string | null
   rawPath: string | null
+  /** compact state stream for the player (docs/format.md) */
+  streamPath: string | null
   workDir: string | null
   createdAt: number
   startedAt: number | null
