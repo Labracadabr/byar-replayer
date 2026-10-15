@@ -9,14 +9,20 @@ for how the headless re-simulation works.
 Electron 44 + TypeScript + electron-vite + React. The library index uses `node:sqlite`, which is built into Electron's
 Node 24, instead of better-sqlite3, so there's no native module to rebuild. Replay metadata comes from `sdfz-demo-parser`.
 
+## Install / launch
+
+- **Installer:** `npm run dist` builds `release\BAR Replay Viewer Setup <version>.exe`. Run it once; it installs per
+  user (no admin rights needed) and adds Start-menu and desktop shortcuts named "BAR Replay Viewer".
+- **From source:** `npm install` once, then `npm start` (builds and starts the app). `npm run dev` starts it with hot
+  reload for development.
+
 ## Develop
 
 ```
-npm install
 npm run dev        # app with hot reload
 npm test           # unit tests (integration tests use the local BAR demos when present)
 npm run typecheck
-npm run build && npx electron .
+npm run dist       # Windows installer in release/
 ```
 
 The settings live in `%APPDATA%\bar-replay-viewer\settings.json`. Everything else (library database, sim jobs,

@@ -61,6 +61,31 @@ interface Filters {
 
 const EMPTY: Filters = { text: '', favorites: false, sim: '', preset: '', from: '', to: '' }
 
+type SortKey = 'date' | 'map' | 'players' | 'mode' | 'duration' | 'sim'
+const SORT_VALUE: Record<SortKey, (r: ReplaySummary) => string | number> = {
+  date: (r) => r.startTime,
+  map: (r) => r.mapName.toLowerCase(),
+  players: (r) => r.players.length,
+  mode: (r) => r.preset,
+  duration: (r) => r.durationMs,
+  sim: (r) => ['running', 'queued', 'ready', 'failed', 'none'].indexOf(r.simStatus)
+}
+
+function MapCell({ r }: { r: ReplaySummary }): React.JSX.Element {
+  const [broken, setBroken] = useState(false)
+  if (r.parseError) return <span className="error" title={r.parseError}>Unreadable: {r.fileName}</span>
+  return (
+    <span className="map-cell">
+      {broken ? (
+        <span className="map-thumb empty-thumb" />
+      ) : (
+        <img className="map-thumb" src={`brv://minimap/${r.id}?thumb=1`} loading="lazy" alt="" onError={() => setBroken(true)} />
+      )}
+      {r.mapName}
+    </span>
+  )
+}
+
 function matches(r: ReplaySummary, f: Filters): boolean {
   if (f.favorites && !r.favorite) return false
   if (f.sim && r.simStatus !== f.sim) return false
@@ -86,6 +111,9 @@ export function LibraryView({
   const [selected, setSelected] = useState<number | null>(null)
   const [filters, setFilters] = useState<Filters>(EMPTY)
   const [scan, setScan] = useState<ScanProgress>({ running: false, done: 0, total: 0 })
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'date', desc: true })
+  const [dragging, setDragging] = useState(false)
+  const [importMsg, setImportMsg] = useState<string | null>(null)
 
   const reload = useCallback(() => void window.api.listReplays().then(setReplays), [])
   useEffect(() => {
@@ -109,7 +137,44 @@ export function LibraryView({
     }
   }, [reload])
 
-  const visible = useMemo(() => replays.filter((r) => matches(r, filters)), [replays, filters])
+  const visible = useMemo(() => {
+    const v = SORT_VALUE[sort.key]
+    const dir = sort.desc ? -1 : 1
+    return replays
+      .filter((r) => matches(r, filters))
+      .sort((a, b) => {
+        const x = v(a)
+        const y = v(b)
+        return (x < y ? -1 : x > y ? 1 : b.startTime - a.startTime) * dir
+      })
+  }, [replays, filters, sort])
+
+  const imported = (ids: number[], tried: number): void => {
+    reload()
+    if (ids.length > 0) {
+      setSelected(ids[0])
+      setFilters(EMPTY) // make sure the imported replay is visible
+    }
+    setImportMsg(tried > ids.length ? `${tried - ids.length} file(s) skipped: only .sdfz replays can be imported.` : null)
+  }
+
+  const onDrop = async (e: React.DragEvent): Promise<void> => {
+    e.preventDefault()
+    setDragging(false)
+    const paths = [...e.dataTransfer.files].map((f) => window.api.pathForFile(f)).filter(Boolean)
+    if (paths.length === 0) return
+    imported(await window.api.importReplays(paths), paths.length)
+  }
+
+  const header = (key: SortKey, label: string): React.JSX.Element => (
+    <th
+      className="sortable"
+      onClick={() => setSort((s) => (s.key === key ? { key, desc: !s.desc } : { key, desc: key === 'date' || key === 'duration' }))}
+    >
+      {label}
+      {sort.key === key && <span className="sort-arrow">{sort.desc ? ' ▾' : ' ▴'}</span>}
+    </th>
+  )
   const set = <K extends keyof Filters>(k: K, v: Filters[K]): void => setFilters((f) => ({ ...f, [k]: v }))
 
   const toggleFavorite = async (r: ReplaySummary): Promise<void> => {
@@ -118,7 +183,20 @@ export function LibraryView({
   }
 
   return (
-    <div className="library">
+    <div
+      className="library"
+      onDragOver={(e) => {
+        if ([...e.dataTransfer.types].includes('Files')) {
+          e.preventDefault()
+          setDragging(true)
+        }
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDragging(false)
+      }}
+      onDrop={onDrop}
+    >
+      {dragging && <div className="drop-overlay">Drop .sdfz replays to add them</div>}
       <header className="toolbar">
         <input
           className="search"
@@ -166,6 +244,9 @@ export function LibraryView({
         <span className="muted">
           {scan.running ? `Scanning ${scan.done}/${scan.total}…` : `${visible.length} of ${replays.length} replays`}
         </span>
+        <button type="button" onClick={async () => imported(await window.api.openReplays(), 0)}>
+          Add replay…
+        </button>
         <button type="button" onClick={() => void window.api.rescan()} disabled={scan.running}>
           Rescan
         </button>
@@ -173,19 +254,24 @@ export function LibraryView({
           Settings
         </button>
       </header>
+      {importMsg && (
+        <div className="warn-box toast" onClick={() => setImportMsg(null)}>
+          {importMsg}
+        </div>
+      )}
       <div className="library-body">
         <div className="table-wrap">
           <table className="replays">
             <thead>
               <tr>
                 <th className="col-fav">★</th>
-                <th>Date</th>
-                <th>Map</th>
-                <th>Players</th>
-                <th>Mode</th>
-                <th>Duration</th>
+                {header('date', 'Date')}
+                {header('map', 'Map')}
+                {header('players', 'Players')}
+                {header('mode', 'Mode')}
+                {header('duration', 'Duration')}
                 <th>Winner</th>
-                <th>Simulation</th>
+                {header('sim', 'Simulation')}
                 <th className="col-note" title="Has note">✎</th>
               </tr>
             </thead>
@@ -205,7 +291,9 @@ export function LibraryView({
                     </button>
                   </td>
                   <td className="nowrap">{formatDate(r.startTime)}</td>
-                  <td>{r.parseError ? <span className="error" title={r.parseError}>Unreadable: {r.fileName}</span> : r.mapName}</td>
+                  <td>
+                    <MapCell r={r} />
+                  </td>
                   <td>
                     <Teams r={r} />
                   </td>
@@ -221,7 +309,11 @@ export function LibraryView({
             </tbody>
           </table>
           {visible.length === 0 && !scan.running && (
-            <div className="empty">{replays.length === 0 ? 'No replays found in the replay folders.' : 'No replays match the filters.'}</div>
+            <div className="empty">
+              {replays.length === 0
+                ? 'No replays found in the replay folders. Drop .sdfz files here or use "Add replay…".'
+                : 'No replays match the filters.'}
+            </div>
           )}
         </div>
         {selected !== null && <DetailPanel id={selected} onChanged={reload} onClose={() => setSelected(null)} onOpenPlayer={onOpenPlayer} />}

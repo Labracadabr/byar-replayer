@@ -80,6 +80,20 @@ function registerIpc(): void {
   ipcMain.handle('library:setFavorite', (_e, id: number, fav: boolean) => requireLibrary().setFavorite(id, fav))
   ipcMain.handle('library:setNote', (_e, id: number, note: string) => requireLibrary().setNote(id, note))
   ipcMain.handle('library:rescan', () => requireLibrary().scan())
+  ipcMain.handle('library:remove', (_e, id: number) => {
+    requireQueue().deleteData(id) // recordings + job history; throws while a simulation runs
+    requireLibrary().remove(id)
+  })
+  ipcMain.handle('library:import', (_e, paths: string[]) => requireLibrary().addManual(paths))
+  ipcMain.handle('library:openReplays', async () => {
+    const r = await dialog.showOpenDialog(win!, {
+      title: 'Add replays',
+      defaultPath: settings.get().demoDirs[0],
+      filters: [{ name: 'BAR replays', extensions: ['sdfz'] }],
+      properties: ['openFile', 'multiSelections']
+    })
+    return r.canceled ? [] : requireLibrary().addManual(r.filePaths)
+  })
   ipcMain.handle('deps:check', (_e, id: number): ReplayDeps => deps.check(depsRequest(id)))
   ipcMain.handle('deps:ensure', async (_e, id: number): Promise<ReplayDeps> => {
     const req = depsRequest(id)

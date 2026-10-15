@@ -133,6 +133,24 @@ export function DetailPanel({ id, onChanged, onClose, onOpenPlayer }: Props): Re
           <dt>File</dt>
           <dd className="mono small">{r.fileName}</dd>
         </dl>
+        {r.source === 'manual' && (
+          <button
+            type="button"
+            className="link"
+            title="Forget this replay and its simulated data. The .sdfz file is kept."
+            onClick={async () => {
+              try {
+                await window.api.removeReplay(r.id)
+                onChanged()
+                onClose()
+              } catch (e) {
+                alert((e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+              }
+            }}
+          >
+            Remove from library
+          </button>
+        )}
         {settingsEntries.length > 0 && (
           <details>
             <summary>Game settings ({settingsEntries.length})</summary>

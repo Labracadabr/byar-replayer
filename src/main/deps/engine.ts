@@ -3,8 +3,11 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { path7za } from '7zip-bin'
+import { path7za as packed7za } from '7zip-bin'
+import { unpacked } from '../unpacked'
 import { downloadFile, type Progress } from './download'
+
+const path7za = unpacked(packed7za) // the real exe is outside app.asar when packaged
 
 const run = promisify(execFile)
 

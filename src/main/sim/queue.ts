@@ -10,7 +10,8 @@ import type { JobInfo, JobStage, JobStatus, Settings } from '@shared/types'
 import type { Db } from '../db'
 import type { DepsResolver } from '../deps/resolver'
 import type { Library } from '../library'
-import convertWorkerPath from '../stream/convert-worker?modulePath'
+import convertWorkerModule from '../stream/convert-worker?modulePath'
+import { unpacked } from '../unpacked'
 import type { ConvertJob, ConvertMessage } from '../stream/convert-worker'
 import type { ConvertResult } from '../stream/convert'
 import { Worker } from 'node:worker_threads'
@@ -38,7 +39,7 @@ const KEEP_RAW = process.env.BRV_KEEP_RAW === '1'
 
 function convertInWorker(job: ConvertJob): Promise<ConvertResult> {
   return new Promise((resolve, reject) => {
-    const w = new Worker(convertWorkerPath, { workerData: job })
+    const w = new Worker(unpacked(convertWorkerModule), { workerData: job })
     w.once('message', (m: ConvertMessage) => (m.ok ? resolve(m.result) : reject(new Error(`Conversion failed: ${m.error}`))))
     w.once('error', reject)
     w.once('exit', (code) => code !== 0 && reject(new Error(`Converter exited with code ${code}`)))

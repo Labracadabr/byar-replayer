@@ -33,6 +33,8 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(8)
   const [hpBars, setHpBars] = useState(true)
+  const [overlays, setOverlays] = useState({ height: false, metal: false })
+  const [overlayMissing, setOverlayMissing] = useState<string | null>(null)
   const [loadingChunk, setLoadingChunk] = useState(false)
   const [hover, setHover] = useState<Hover | null>(null)
 
@@ -59,6 +61,19 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
     setFrame(frameRef.current)
   }, [])
 
+  const toggleOverlay = useCallback((kind: 'height' | 'metal') => {
+    setOverlays((cur) => {
+      const next = { ...cur, [kind]: !cur[kind] }
+      void stageRef.current?.setMapOverlay(kind, next[kind]).then((ok) => {
+        if (!ok) {
+          setOverlayMissing(`The ${kind} map isn't available (map file not found).`)
+          setOverlays((c) => ({ ...c, [kind]: false }))
+        }
+      })
+      return next
+    })
+  }, [])
+
   // open the stream + set up the stage
   useEffect(() => {
     const client = new StreamClient()
@@ -71,7 +86,7 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
         if (disposed) return
         stage = new PlayerStage(canvasHost.current!, header, meta)
         stageRef.current = stage
-        await stage.init(`brv://minimap/${replayId}`)
+        await stage.init(`brv://minimap/${replayId}`, `brv://overlay/${replayId}`)
         frameRef.current = header.firstFrame
         setData({ header, meta })
         void client.load(0)
@@ -208,6 +223,12 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
         case 'f':
           stageRef.current?.fit()
           break
+        case 't':
+          toggleOverlay('height')
+          break
+        case 'm':
+          toggleOverlay('metal')
+          break
         case 'Escape':
           onClose()
           break
@@ -215,7 +236,22 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [data, seek, onClose])
+  }, [data, seek, onClose, toggleOverlay])
+
+  // per-bucket death counts: where the fights are
+  const fights = useMemo(() => {
+    if (!data) return [] as number[]
+    const { firstFrame, lastFrame } = data.header
+    const buckets = new Array<number>(200).fill(0)
+    const span = Math.max(1, lastFrame - firstFrame)
+    for (const d of deaths) {
+      const i = Math.min(199, Math.floor(((d.frame - firstFrame) / span) * 200))
+      if (i >= 0) buckets[i]++
+    }
+    // log scale: the end-of-game mass destruction would otherwise flatten every real fight
+    const max = Math.log1p(Math.max(1, ...buckets))
+    return buckets.map((b) => Math.log1p(b) / max)
+  }, [data, deaths])
 
   const onMouseMove = (e: React.MouseEvent): void => {
     const r = canvasHost.current!.getBoundingClientRect()
@@ -244,6 +280,11 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
         <div className="player-canvas" ref={canvasHost} onMouseMove={onMouseMove} onMouseLeave={() => setHover(null)}>
           {!data && <div className="player-loading">Loading recording…</div>}
           {loadingChunk && <div className="player-chunk-loading">Loading…</div>}
+          {overlayMissing && (
+            <div className="player-chunk-loading warn" onClick={() => setOverlayMissing(null)}>
+              {overlayMissing}
+            </div>
+          )}
           {hoveredUnit && meta && hover && <Tooltip unit={hoveredUnit} meta={meta} x={hover.x} y={hover.y} />}
         </div>
         {meta && header && <SidePanel meta={meta} frame={frame} onSeek={seek} />}
@@ -255,6 +296,9 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
           playing={playing}
           speed={speed}
           hpBars={hpBars}
+          overlays={overlays}
+          fights={fights}
+          onOverlay={toggleOverlay}
           onPlay={() => {
             if (frameRef.current >= header.lastFrame) seek(header.firstFrame)
             setPlaying(!playing)
@@ -280,7 +324,7 @@ function PlayerTop({ title, onClose }: { title: string; onClose(): void }): Reac
       </button>
       <span className="player-title">{title}</span>
       <span className="muted small">
-        Space play/pause · ←/→ ±10 s (Shift ±60 s) · , . step · +/− speed · H HP bars · F fit · double-click map to fit
+        Space play/pause · ←/→ ±10 s (Shift ±60 s) · , . step · +/− speed · H HP bars · T height · M metal · F fit
       </span>
     </header>
   )
@@ -311,6 +355,9 @@ function Timeline(props: {
   playing: boolean
   speed: number
   hpBars: boolean
+  overlays: { height: boolean; metal: boolean }
+  fights: number[]
+  onOverlay(kind: 'height' | 'metal'): void
   onPlay(): void
   onSeek(f: number): void
   onSpeed(s: number): void
@@ -332,15 +379,29 @@ function Timeline(props: {
       <span className="time mono">
         {clock(frame)} / {clock(h.lastFrame)}
       </span>
-      <input
-        className="scrubber"
-        type="range"
-        min={h.firstFrame}
-        max={h.lastFrame}
-        step={1}
-        value={Math.round(frame)}
-        onChange={(e) => props.onSeek(Number(e.target.value))}
-      />
+      <div className="scrubber-wrap">
+        <div
+          className="fights"
+          title="Unit deaths over time: click to jump"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect()
+            props.onSeek(h.firstFrame + ((e.clientX - r.left) / r.width) * (h.lastFrame - h.firstFrame))
+          }}
+        >
+          {props.fights.map((v, i) => (
+            <span key={i} style={{ height: `${Math.round(v * 100)}%` }} />
+          ))}
+        </div>
+        <input
+          className="scrubber"
+          type="range"
+          min={h.firstFrame}
+          max={h.lastFrame}
+          step={1}
+          value={Math.round(frame)}
+          onChange={(e) => props.onSeek(Number(e.target.value))}
+        />
+      </div>
       <div className="speeds">
         {SPEEDS.map((s) => (
           <button type="button" key={s} className={s === props.speed ? 'on' : ''} onClick={() => props.onSpeed(s)}>
@@ -351,6 +412,14 @@ function Timeline(props: {
       <label className="check small">
         <input type="checkbox" checked={props.hpBars} onChange={(e) => props.onHpBars(e.target.checked)} />
         HP bars
+      </label>
+      <label className="check small" title="Shaded height map (T)">
+        <input type="checkbox" checked={props.overlays.height} onChange={() => props.onOverlay('height')} />
+        Height
+      </label>
+      <label className="check small" title="Metal spots (M)">
+        <input type="checkbox" checked={props.overlays.metal} onChange={() => props.onOverlay('metal')} />
+        Metal
       </label>
     </footer>
   )

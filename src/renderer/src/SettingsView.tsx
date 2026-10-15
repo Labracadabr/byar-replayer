@@ -147,7 +147,9 @@ export function SettingsView({ state, setup, onSaved, onClose }: Props): React.J
             value={s.concurrency}
             onChange={(e) => set('concurrency', Math.max(0, Number(e.target.value) || 0))}
           />
-          <span className="field-hint">0 = automatic (CPU cores − 1)</span>
+          <span className="field-hint">
+            0 = automatic: {state.autoConcurrency} on this machine (limited by CPU cores and ~6 GB of RAM per simulation)
+          </span>
         </label>
         <label className="field">
           <span className="field-label">Sample interval (sim frames)</span>

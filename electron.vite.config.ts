@@ -4,7 +4,8 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // bundle the pure-JS parser so the (unpacked) converter worker needs nothing from node_modules
+    plugins: [externalizeDepsPlugin({ exclude: ['sdfz-demo-parser'] })],
     resolve: { alias: { '@shared': resolve('src/shared') } }
   },
   preload: {

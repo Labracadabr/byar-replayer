@@ -34,6 +34,8 @@ export class PlayerStage {
   private unitLayer = new Container()
   private projLayer = new Container()
   private overlay = new Graphics()
+  private mapOverlays = new Map<'height' | 'metal', Sprite | 'loading' | 'failed'>()
+  private overlayBase = ''
   private buildingPool: Sprite[] = []
   private unitPool: Sprite[] = []
   private projPool: Sprite[] = []
@@ -61,7 +63,39 @@ export class PlayerStage {
     }
   }
 
-  async init(minimapUrl: string): Promise<void> {
+  /** Shows/hides the height or metal map overlay, loading it on first use. Resolves false if unavailable. */
+  async setMapOverlay(kind: 'height' | 'metal', visible: boolean): Promise<boolean> {
+    const cur = this.mapOverlays.get(kind)
+    if (cur instanceof Sprite) {
+      cur.visible = visible
+      return true
+    }
+    if (cur === 'failed') return false
+    if (!visible || cur === 'loading') return true
+    this.mapOverlays.set(kind, 'loading')
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = `${this.overlayBase}/${kind}`
+    try {
+      await img.decode()
+    } catch {
+      this.mapOverlays.set(kind, 'failed')
+      return false
+    }
+    if (this.destroyed) return false
+    const s = Sprite.from(img)
+    s.width = this.header.mapSizeX
+    s.height = this.header.mapSizeZ
+    s.alpha = kind === 'height' ? 0.85 : 1
+    s.zIndex = kind === 'height' ? 1 : 2 // above the minimap (0); metal above height
+    this.mapLayer.addChild(s)
+    this.mapOverlays.set(kind, s)
+    return true
+  }
+
+  async init(minimapUrl: string, overlayBase = ''): Promise<void> {
+    this.overlayBase = overlayBase
+    this.mapLayer.sortableChildren = true
     await this.app.init({
       resizeTo: this.el,
       background: '#0b0d10',

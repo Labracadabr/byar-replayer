@@ -13,6 +13,7 @@ interface ReplayRow {
   file_name: string
   file_size: number
   file_mtime: number
+  source: string
   game_id: string
   engine_version: string
   game_version: string
@@ -51,6 +52,7 @@ function toSummary(row: ReplayRow): ReplaySummary {
     path: row.path,
     fileName: row.file_name,
     fileSize: row.file_size,
+    source: row.source === 'manual' ? 'manual' : 'scan',
     gameId: row.game_id,
     engineVersion: row.engine_version,
     gameVersion: row.game_version,
@@ -108,6 +110,12 @@ export class Library extends EventEmitter {
     this.db.prepare('UPDATE replays SET favorite = ? WHERE id = ?').run(favorite ? 1 : 0, id)
   }
 
+  /** Removes a replay row (and, via foreign keys, its jobs). The replay file is not touched. */
+  remove(id: number): void {
+    this.db.prepare('DELETE FROM replays WHERE id = ?').run(id)
+    this.emit('changed')
+  }
+
   setNote(id: number, note: string): void {
     this.db.prepare('UPDATE replays SET note = ? WHERE id = ?').run(note, id)
   }
@@ -123,10 +131,20 @@ export class Library extends EventEmitter {
     return this.scanning
   }
 
-  /** Add a replay outside the configured folders (drag & drop / file picker). */
-  async addManual(path: string): Promise<void> {
-    await this.indexFile(resolve(path), 'manual')
+  /** Add replays outside the configured folders (drag & drop / file picker); returns their ids. */
+  async addManual(paths: string[]): Promise<number[]> {
+    const ids: number[] = []
+    for (const p of paths) {
+      const path = resolve(p)
+      if (!path.toLowerCase().endsWith('.sdfz') || !this.exists(path)) continue
+      // files inside a scanned folder keep their 'scan' source; anything else is remembered as manual
+      const inScanned = this.demoDirs.some((d) => resolve(d).toLowerCase() === resolve(path, '..').toLowerCase())
+      await this.indexFile(path, inScanned ? 'scan' : 'manual')
+      const row = this.db.prepare('SELECT id FROM replays WHERE path = ?').get(path) as { id: number } | undefined
+      if (row) ids.push(row.id)
+    }
     this.emit('changed')
+    return ids
   }
 
   startWatching(): void {

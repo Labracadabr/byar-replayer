@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Settings, SettingsState } from '@shared/types'
 import { defaultSettings, validateSettings } from './paths'
+import { autoConcurrency } from './sim/queue'
 
 export class SettingsStore {
   private settings: Settings
@@ -26,7 +27,7 @@ export class SettingsStore {
   }
 
   state(): SettingsState {
-    return { settings: this.settings, problems: validateSettings(this.settings) }
+    return { settings: this.settings, problems: validateSettings(this.settings), autoConcurrency: autoConcurrency() }
   }
 
   update(patch: Partial<Settings>): SettingsState {

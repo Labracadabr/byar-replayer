@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { Api, DepState, JobInfo, ScanProgress } from '@shared/types'
 
 function subscribe<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
@@ -16,6 +16,10 @@ const api: Api = {
   setFavorite: (id, favorite) => ipcRenderer.invoke('library:setFavorite', id, favorite),
   setNote: (id, note) => ipcRenderer.invoke('library:setNote', id, note),
   rescan: () => ipcRenderer.invoke('library:rescan'),
+  removeReplay: (id) => ipcRenderer.invoke('library:remove', id),
+  importReplays: (paths) => ipcRenderer.invoke('library:import', paths),
+  openReplays: () => ipcRenderer.invoke('library:openReplays'),
+  pathForFile: (file) => webUtils.getPathForFile(file),
   showInFolder: (path) => ipcRenderer.invoke('shell:showInFolder', path),
   checkDeps: (id) => ipcRenderer.invoke('deps:check', id),
   ensureDeps: (id) => ipcRenderer.invoke('deps:ensure', id),

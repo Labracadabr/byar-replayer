@@ -9,15 +9,11 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dist": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
-    "7zip-bin": "^5.2.0",
-    "fzstd": "^0.1.1",
-    "pixi.js": "^8.22.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "sdfz-demo-parser": "^5.15.1"
+    "7zip-bin": "^5.2.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -25,13 +21,48 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "fzstd": "^0.1.1",
+    "pixi.js": "^8.22.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "sdfz-demo-parser": "^5.15.1",
     "typescript": "^7.0.2",
     "vite": "^7.3.7",
     "vitest": "^3.2.7"
   },
   "allowScripts": {
     "esbuild@0.25.12": true,
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "electron-winstaller": false
+  },
+  "author": "Dmitrii",
+  "build": {
+    "appId": "local.bar-replay-viewer",
+    "productName": "BAR Replay Viewer",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "out/main/**",
+      "node_modules/7zip-bin/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "BAR Replay Viewer"
+    }
   }
 }

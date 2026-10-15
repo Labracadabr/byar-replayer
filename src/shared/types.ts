@@ -29,6 +29,8 @@ export interface SettingsProblem {
 export interface SettingsState {
   settings: Settings
   problems: SettingsProblem[]
+  /** what concurrency = 0 resolves to on this machine */
+  autoConcurrency: number
 }
 
 export type Preset = 'duel' | 'team' | 'ffa' | 'teamffa' | 'pve' | 'unknown'
@@ -74,6 +76,8 @@ export interface ReplaySummary {
   path: string
   fileName: string
   fileSize: number
+  /** 'manual' = added by drag & drop / file picker, outside the replay folders */
+  source: 'scan' | 'manual'
   gameId: string
   engineVersion: string
   gameVersion: string
@@ -140,6 +144,14 @@ export interface Api {
   setFavorite(id: number, favorite: boolean): Promise<void>
   setNote(id: number, note: string): Promise<void>
   rescan(): Promise<void>
+  /** Forget a manually added replay (the file itself is kept) */
+  removeReplay(id: number): Promise<void>
+  /** Import .sdfz files by path; returns the library ids */
+  importReplays(paths: string[]): Promise<number[]>
+  /** File picker for .sdfz files, imported right away */
+  openReplays(): Promise<number[]>
+  /** Real path of a dropped file */
+  pathForFile(file: File): string
   showInFolder(path: string): Promise<void>
   /** Offline check of engine/game/map for a replay */
   checkDeps(id: number): Promise<ReplayDeps>

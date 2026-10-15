@@ -2,7 +2,10 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { path7za } from '7zip-bin'
+import { path7za as packed7za } from '7zip-bin'
+import { unpacked } from '../unpacked'
+
+const path7za = unpacked(packed7za) // the real exe is outside app.asar when packaged
 
 export const MINIMAP_SIZE = 1024
 
@@ -88,20 +91,92 @@ export async function readSmf(mapArchive: string): Promise<Buffer> {
 
 export type PngEncoder = (rgba: Uint8Array, width: number, height: number) => Buffer
 
-/** Extracts the minimap PNG for a map archive into outPng (no-op if it exists). */
-export async function ensureMinimap(mapArchive: string, outPng: string, encodePng: PngEncoder): Promise<void> {
-  if (existsSync(outPng)) return
-  const smf = await readSmf(mapArchive)
-  const h = parseSmfHeader(smf)
-  const dxtSize = (MINIMAP_SIZE * MINIMAP_SIZE) / 2
-  if (h.minimapPtr <= 0 || h.minimapPtr + dxtSize > smf.length) throw new Error('SMF minimap pointer out of range')
-  const rgba = decodeDxt1(smf.subarray(h.minimapPtr, h.minimapPtr + dxtSize), MINIMAP_SIZE, MINIMAP_SIZE)
-  mkdirSync(dirname(outPng), { recursive: true })
-  const tmp = outPng + '.tmp'
-  writeFileSync(tmp, encodePng(rgba, MINIMAP_SIZE, MINIMAP_SIZE))
-  renameSync(tmp, outPng)
+export type MapImage = 'minimap' | 'height' | 'metal'
+
+/** Hill-shaded, elevation-tinted height map ((mapx+1) x (mapy+1) pixels). Below 0 (water) is tinted blue. */
+export function renderHeight(smf: Buffer, h: SmfHeader): { rgba: Uint8Array; width: number; height: number } {
+  const w = h.mapx + 1
+  const ht = h.mapy + 1
+  const raw = new Uint16Array(w * ht)
+  for (let i = 0; i < raw.length; i++) raw[i] = smf.readUInt16LE(h.heightmapPtr + i * 2)
+  const scale = (h.maxHeight - h.minHeight) / 65535
+  const height = (x: number, y: number): number =>
+    h.minHeight + raw[Math.min(ht - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))] * scale
+  const range = Math.max(1, h.maxHeight - Math.max(0, h.minHeight))
+  // light from the north-west, a bit above the horizon
+  const L = [-0.5, -0.5, 0.7]
+  const ll = Math.hypot(L[0], L[1], L[2])
+  const rgba = new Uint8Array(w * ht * 4)
+  for (let y = 0; y < ht; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = (height(x + 1, y) - height(x - 1, y)) / 16
+      const dy = (height(x, y + 1) - height(x, y - 1)) / 16
+      const nl = Math.hypot(dx, dy, 1)
+      const shade = Math.max(0, (-dx * L[0] - dy * L[1] + L[2]) / (nl * ll))
+      const e = height(x, y)
+      const o = (y * w + x) * 4
+      if (e < 0) {
+        const d = Math.min(1, -e / 150)
+        rgba[o] = (40 - 25 * d) * (0.6 + 0.4 * shade)
+        rgba[o + 1] = (90 - 40 * d) * (0.6 + 0.4 * shade)
+        rgba[o + 2] = (150 - 30 * d) * (0.6 + 0.4 * shade)
+      } else {
+        const t = Math.min(1, e / range)
+        // low = olive green, high = light sand
+        const r = 70 + 150 * t
+        const g = 95 + 115 * t
+        const b = 60 + 120 * t
+        rgba[o] = r * shade
+        rgba[o + 1] = g * shade
+        rgba[o + 2] = b * shade
+      }
+      rgba[o + 3] = 255
+    }
+  }
+  return { rgba, width: w, height: ht }
 }
 
-export function minimapCachePath(workDir: string, mapArchive: string): string {
-  return join(workDir, 'cache', 'minimaps', basename(mapArchive).replace(/\.(sd7|sdz)$/i, '') + '.png')
+/** Metal spots as translucent cyan over a transparent image ((mapx/2) x (mapy/2) pixels). */
+export function renderMetal(smf: Buffer, h: SmfHeader): { rgba: Uint8Array; width: number; height: number } {
+  const w = h.mapx / 2
+  const ht = h.mapy / 2
+  const rgba = new Uint8Array(w * ht * 4)
+  for (let i = 0; i < w * ht; i++) {
+    const v = smf[h.metalmapPtr + i]
+    if (v === 0) continue
+    rgba[i * 4] = 80
+    rgba[i * 4 + 1] = 230
+    rgba[i * 4 + 2] = 255
+    rgba[i * 4 + 3] = Math.min(255, 90 + v)
+  }
+  return { rgba, width: w, height: ht }
+}
+
+export function mapImagePath(workDir: string, mapArchive: string, kind: MapImage): string {
+  const stem = basename(mapArchive).replace(/\.(sd7|sdz)$/i, '')
+  return join(workDir, 'cache', 'minimaps', kind === 'minimap' ? `${stem}.png` : `${stem}.${kind}.png`)
+}
+
+/** Writes the minimap, height and metal PNGs for a map archive (one .smf read); skips files that exist. */
+export async function ensureMapImages(mapArchive: string, workDir: string, encodePng: PngEncoder): Promise<void> {
+  const kinds: MapImage[] = ['minimap', 'height', 'metal']
+  if (kinds.every((k) => existsSync(mapImagePath(workDir, mapArchive, k)))) return
+  const smf = await readSmf(mapArchive)
+  const h = parseSmfHeader(smf)
+  const write = (kind: MapImage, img: { rgba: Uint8Array; width: number; height: number }): void => {
+    const out = mapImagePath(workDir, mapArchive, kind)
+    if (existsSync(out)) return
+    mkdirSync(dirname(out), { recursive: true })
+    writeFileSync(out + '.tmp', encodePng(img.rgba, img.width, img.height))
+    renameSync(out + '.tmp', out)
+  }
+  const dxtSize = (MINIMAP_SIZE * MINIMAP_SIZE) / 2
+  if (h.minimapPtr <= 0 || h.minimapPtr + dxtSize > smf.length) throw new Error('SMF minimap pointer out of range')
+  write('minimap', {
+    rgba: decodeDxt1(smf.subarray(h.minimapPtr, h.minimapPtr + dxtSize), MINIMAP_SIZE, MINIMAP_SIZE),
+    width: MINIMAP_SIZE,
+    height: MINIMAP_SIZE
+  })
+  write('height', renderHeight(smf, h))
+  write('metal', renderMetal(smf, h))
 }

@@ -629,3 +629,82 @@ pre.log {
   color: #08121f;
   border-color: var(--accent);
 }
+
+/* library extras */
+.library {
+  position: relative;
+}
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: var(--accent);
+  background: rgba(20, 23, 28, 0.85);
+  border: 3px dashed var(--accent);
+  pointer-events: none;
+}
+.toast {
+  margin: 6px 12px;
+  cursor: pointer;
+}
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+th.sortable:hover {
+  color: var(--text);
+}
+.sort-arrow {
+  color: var(--accent);
+}
+.map-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.map-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 3px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--bg3);
+}
+.empty-thumb {
+  display: inline-block;
+}
+
+/* timeline extras */
+.scrubber-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.scrubber-wrap .scrubber {
+  width: 100%;
+}
+.fights {
+  height: 18px;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  padding: 0 8px; /* line up with the range thumb's travel */
+  cursor: pointer;
+}
+.fights span {
+  flex: 1;
+  background: #ff7a50;
+  opacity: 0.75;
+  min-height: 1px;
+  border-radius: 1px 1px 0 0;
+}
+.player-chunk-loading.warn {
+  top: 30px;
+  color: var(--gold);
+  cursor: pointer;
+}
