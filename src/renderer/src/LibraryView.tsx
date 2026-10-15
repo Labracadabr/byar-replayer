@@ -75,7 +75,13 @@ function matches(r: ReplaySummary, f: Filters): boolean {
   return true
 }
 
-export function LibraryView({ onOpenSettings }: { onOpenSettings(): void }): React.JSX.Element {
+export function LibraryView({
+  onOpenSettings,
+  onOpenPlayer
+}: {
+  onOpenSettings(): void
+  onOpenPlayer(id: number, title: string): void
+}): React.JSX.Element {
   const [replays, setReplays] = useState<ReplaySummary[]>([])
   const [selected, setSelected] = useState<number | null>(null)
   const [filters, setFilters] = useState<Filters>(EMPTY)
@@ -218,7 +224,7 @@ export function LibraryView({ onOpenSettings }: { onOpenSettings(): void }): Rea
             <div className="empty">{replays.length === 0 ? 'No replays found in the replay folders.' : 'No replays match the filters.'}</div>
           )}
         </div>
-        {selected !== null && <DetailPanel id={selected} onChanged={reload} onClose={() => setSelected(null)} />}
+        {selected !== null && <DetailPanel id={selected} onChanged={reload} onClose={() => setSelected(null)} onOpenPlayer={onOpenPlayer} />}
       </div>
     </div>
   )

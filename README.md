@@ -23,6 +23,12 @@ The settings live in `%APPDATA%\bar-replay-viewer\settings.json`. Everything els
 recordings, caches) goes in the work folder, which defaults to a `bar-replay-viewer` folder next to the BAR install.
 The work folder must be an ASCII-only path.
 
+The player (`src/renderer/src/player/`) loads a recording over the app's `brv://` protocol, decodes it in a Web
+Worker and draws it with PixiJS. Keys: Space play/pause, ←/→ ±10 s (Shift ±60 s), `,`/`.` step, +/− speed, H HP bars,
+F fit, Esc back to the library.
+
 `spike/` holds the milestone-0 Python scripts: demo header reader, rapid package reader, and headless runner.
 `scripts/cdp.mjs` takes screenshots of, and runs JS in, the running app over the DevTools protocol (start the app with
-`--remote-debugging-port=9223`).
+`--remote-debugging-port=9223`). Add `--disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding
+--disable-background-timer-throttling` when driving the player that way: a window covered by others gets no
+`requestAnimationFrame`, so playback would not advance.

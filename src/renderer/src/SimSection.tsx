@@ -15,7 +15,15 @@ function elapsed(job: JobInfo): string {
   return formatDuration((job.finishedAt ?? Date.now()) - job.startedAt)
 }
 
-export function SimSection({ replay, onChanged }: { replay: ReplayDetail; onChanged(): void }): React.JSX.Element {
+export function SimSection({
+  replay,
+  onChanged,
+  onOpenPlayer
+}: {
+  replay: ReplayDetail
+  onChanged(): void
+  onOpenPlayer(id: number, title: string): void
+}): React.JSX.Element {
   const [job, setJob] = useState<JobInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [, tick] = useState(0)
@@ -63,7 +71,13 @@ export function SimSection({ replay, onChanged }: { replay: ReplayDetail; onChan
             Cancel
           </button>
         )}
-        <button type="button" disabled title="Coming in milestone 5">
+        <button
+          type="button"
+          className={job?.status === 'done' ? 'primary' : ''}
+          disabled={job?.status !== 'done' || !job.streamPath}
+          title={job?.status === 'done' ? 'Watch the simulated game' : 'Simulate the replay first'}
+          onClick={() => onOpenPlayer(replay.id, `${replay.mapName} · ${new Date(replay.startTime).toLocaleDateString()}`)}
+        >
           Open player
         </button>
         <button type="button" onClick={() => void window.api.showInFolder(replay.path)}>

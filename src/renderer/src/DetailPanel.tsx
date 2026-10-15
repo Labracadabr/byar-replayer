@@ -8,9 +8,10 @@ interface Props {
   id: number
   onChanged(): void
   onClose(): void
+  onOpenPlayer(id: number, title: string): void
 }
 
-export function DetailPanel({ id, onChanged, onClose }: Props): React.JSX.Element {
+export function DetailPanel({ id, onChanged, onClose, onOpenPlayer }: Props): React.JSX.Element {
   const [r, setR] = useState<ReplayDetail | null>(null)
   const [note, setNote] = useState('')
   const [saved, setSaved] = useState(true)
@@ -83,7 +84,7 @@ export function DetailPanel({ id, onChanged, onClose }: Props): React.JSX.Elemen
       {r.parseError && <div className="error-box">Could not read this replay: {r.parseError}</div>}
       {r.lastFrame < 0 && !r.parseError && <div className="warn-box">This game never started (lobby only).</div>}
 
-      <SimSection replay={r} onChanged={onChanged} />
+      <SimSection replay={r} onChanged={onChanged} onOpenPlayer={onOpenPlayer} />
 
       {!r.parseError && r.lastFrame >= 0 && (
         <section>

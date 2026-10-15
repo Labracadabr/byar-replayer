@@ -5,6 +5,7 @@ import type { ReplayDeps, Settings, SettingsState } from '@shared/types'
 import { openDb, type Db } from './db'
 import { DepsResolver } from './deps/resolver'
 import { Library } from './library'
+import { handleProtocol, registerSchemePrivileges } from './protocol'
 import { SettingsStore } from './settings'
 import { SimQueue } from './sim/queue'
 
@@ -116,12 +117,15 @@ function createWindow(): void {
   else void win.loadFile(join(__dirname, '../renderer/index.html'))
 }
 
+registerSchemePrivileges()
+
 app.whenReady().then(() => {
   settings = new SettingsStore(app.getPath('userData'))
   deps = new DepsResolver(() => settings.get())
   deps.on('progress', (st) => send('deps:progress', st))
   deps.on('log', (line: string) => console.log('[deps]', line))
   registerIpc()
+  handleProtocol({ library: () => library, queue: () => queue, settings: () => settings.get() })
   createWindow()
   startServices()
 })
