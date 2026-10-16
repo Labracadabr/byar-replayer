@@ -6,7 +6,7 @@ text, one record per line, space-separated, optimized for being cheap to write f
 turns it into the compact state stream (`docs/format.md`). Frames are sim frames (30 per second).
 
 ```
-BRVRAW 1
+BRVRAW 2
 H interval=15 projInterval=5 mapX=12288 mapZ=12288 gaia=16 engine=... game=Beyond_All_Reason_test-... map=...
 T <teamID> <allyTeam> <r> <g> <b> <isAI> <side> <name...>        one per team, colors 0..255
 F <frame> <count>                                                  unit sample, followed by <count> unit lines:
@@ -39,12 +39,12 @@ ABORT shutdown <frame>                                             last line if 
   have spaces replaced with `_`.
 - Chat isn't recorded here; the converter takes it from the demo file itself (`sdfz-demo-parser` chat log).
 
-## Unit definitions (BRVDEFS v1)
+## Unit definitions (BRVDEFS v2)
 
-The game's unit and weapon tables, dumped once per game version to `<work>/cache/unitdefs/<gameVersion>.txt`:
+The game's unit and weapon tables, dumped once per game version to `<work>/cache/unitdefs/<gameVersion>.v2.txt`:
 
 ```
-BRVDEFS 1
+BRVDEFS 2
 U <id> <name> <xsize> <zsize> <isBuilding> <isAir> <isShip> <isCommander> <metal> <energy> <health> <speed> <iconType> <humanName...>
 W <id> <name> <type> <range> <r> <g> <b> <size> <description...>     (v2: weapon visual color 0..255, size)
 ```
