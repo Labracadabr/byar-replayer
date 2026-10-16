@@ -1,6 +1,6 @@
 {
   "name": "bar-replay-viewer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Offline re-simulation and 2D playback of Beyond All Reason replays",
   "main": "out/main/index.js",
