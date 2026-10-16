@@ -708,3 +708,66 @@ th.sortable:hover {
   color: var(--gold);
   cursor: pointer;
 }
+
+/* roster tooltip + ranks */
+.players-cell {
+  cursor: help;
+}
+.roster-tooltip {
+  position: fixed;
+  z-index: 20;
+  width: 360px;
+  max-height: 80vh;
+  overflow: hidden;
+  padding: 8px;
+  background: rgba(24, 28, 34, 0.97);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+.roster-team {
+  padding: 4px 6px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  background: var(--bg3);
+}
+.roster-team.winner {
+  outline: 1px solid rgba(242, 193, 78, 0.4);
+}
+.roster-team-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.roster-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+}
+.roster-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rank-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+/* chat feed: pings and drawings */
+.chat-ping {
+  color: var(--gold);
+}
+.side-name .rank-icon {
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.side-name {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}

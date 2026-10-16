@@ -1,4 +1,4 @@
-# Raw recording format (BRVRAW v1)
+# Raw recording format (BRVRAW v2)
 
 Written by the recorder widget ([resources/widget/brv_recorder.lua](../resources/widget/brv_recorder.lua)) during a
 headless re-simulation, and stored as `<work>/recordings/replay-<id>/raw.txt`. It is an intermediate format: plain
@@ -10,7 +10,7 @@ BRVRAW 1
 H interval=15 projInterval=5 mapX=12288 mapZ=12288 gaia=16 engine=... game=Beyond_All_Reason_test-... map=...
 T <teamID> <allyTeam> <r> <g> <b> <isAI> <side> <name...>        one per team, colors 0..255
 F <frame> <count>                                                  unit sample, followed by <count> unit lines:
-<unitID> <unitDefID> <team> <x> <z> <y> <heading> <hp> <maxHp> <build%>
+<unitID> <unitDefID> <team> <x> <z> <y> <heading> <hp> <maxHp> <build%> <work> [<targetX> <targetZ>]
 P <frame> <count>                                                  projectile sample, followed by <count> lines:
 <projID> <weaponDefID> <team> <x> <z> <y> <vx> <vz>
 E <frame> C <unitID> <unitDefID> <team> <builderID>               unit created (construction started)
@@ -26,7 +26,13 @@ ABORT shutdown <frame>                                             last line if 
   0..100 (100 = finished).
 - Unit samples list **all** units every `interval` frames (default 15 = 2 Hz). Static buildings are deduplicated
   by the converter, not here.
-- Projectiles are sampled every `projInterval` frames (default 5) and only written when there are any.
+- `work` (v2): what the unit spends build power on, 0 = nothing, 1 build, 2 repair, 3 reclaim, 4 resurrect,
+  5 capture, followed by the target's position. From `Spring.GetUnitWorkerTask`; feature targets (wrecks) are
+  `featureID + Game.maxUnits`. The engine reports a task while the builder is still travelling, so the recorder only
+  writes it once the target is within the builder's `buildDistance` + target radius.
+- Projectiles are sampled every `projInterval` frames (default 5) and only written when there are any. v2 records
+  weapon projectiles only (flying debris, ~half of all projectiles, is skipped). For beam lasers and lightning the
+  velocity is the whole beam vector.
 - IDs: unit IDs are reused by the engine after death, so the converter must key units by (id, creation event).
   `-1` means unknown (for example an attacker that wasn't visible or that no longer exists).
 - Names (team names, unit human names) are always the last field and may contain spaces; other string fields
@@ -40,7 +46,7 @@ The game's unit and weapon tables, dumped once per game version to `<work>/cache
 ```
 BRVDEFS 1
 U <id> <name> <xsize> <zsize> <isBuilding> <isAir> <isShip> <isCommander> <metal> <energy> <health> <speed> <iconType> <humanName...>
-W <id> <name> <type> <range> <description...>
+W <id> <name> <type> <range> <r> <g> <b> <size> <description...>     (v2: weapon visual color 0..255, size)
 ```
 
 `xsize`/`zsize` are footprints in 8-elmo squares. The flags are 0/1.

@@ -1,4 +1,4 @@
-# State stream format (BRVS v1)
+# State stream format (BRVS v2)
 
 One file per simulated game, `<work>/recordings/replay-<id>/game.brvs`, produced by
 [src/main/stream/convert.ts](../src/main/stream/convert.ts) from the recorder's raw output ([raw-format.md](raw-format.md)).
@@ -22,7 +22,7 @@ Header JSON (`StreamHeader`):
 
 | field | meaning |
 |---|---|
-| `formatVersion` | 1 |
+| `formatVersion` | 2 (v1 files still decode: no work fields, i8 projectile velocities) |
 | `gameId`, `engine`, `game`, `mapName` | identification |
 | `mapSizeX`, `mapSizeZ` | map size in elmos (map units × 512) |
 | `sampleInterval` | sim frames between unit samples (default 15 = 2 Hz; 30 frames = 1 s) |
@@ -38,10 +38,15 @@ Header JSON (`StreamHeader`):
 - `winners`: winning ally teams (empty if the game didn't end with a game over).
 - `unitDefs`: only the defs that appear in the game, `id → {name, humanName, xsize, zsize (8-elmo squares), kind, metal, energy, health, iconType}`.
   `kind` is one of `building | ground | air | ship | commander`, for icon shapes.
-- `weaponDefs`: the weapons that appear in projectile samples, `id → {name, type}` (`Cannon`, `LaserCannon`, `MissileLauncher`, …).
+- `weaponDefs`: the weapons that appear in projectile samples, `id → {name, type, color?, size?}` (`Cannon`,
+  `LaserCannon`, `BeamLaser`, `MissileLauncher`, …; color/size from v2 recordings). The player draws each type
+  differently: dots (cannons), streaks (laser bolts), full-length beams, jagged lightning, missiles/torpedoes with
+  trails, bombs, flames, D-gun.
 - `events`: `[frame, type, uid, def, team, other, x, z]`. Types: 1 created (other = builder uid), 2 finished,
   3 destroyed (other = attacker uid or −1, x/z = position), 4 given (other = previous team), 5 game over.
-- `chat`: `{frame, playerId, name, type: ally|spec|global, message}`, taken from the demo file.
+- `chat`: `{frame, playerId, name, type: ally|spec|global, message}`, taken from the demo file. The player prefers
+  reading chat and map pings/drawings from the demo itself (`readDemoTimeline`: exact frames counted from
+  KEYFRAME/NEWFRAME packets), so older recordings get them too.
 - `stats`: per team, every 30 frames from frame 0: `units` (alive units, including unfinished ones) and `army`
   (metal value of finished mobile units).
 
@@ -57,16 +62,19 @@ sample 0 (keyframe):
     varint frame - frameStart
     varint n
     n × unit:     varint uid - previousUid   (sorted by uid, first delta from 0)
-                  varint def, varint team, u16 x, u16 z, u8 heading, u8 hp, u8 build
+                  varint def, varint team, u16 x, u16 z, u8 heading, u8 hp, u8 build,
+                  u8 work, [u16 workX, u16 workZ if work ≠ 0]          (v2)
 sample i > 0 (delta against sample i−1):
     varint frame - previousSampleFrame
     varint nRemoved;  nRemoved × varint uidDelta
     varint nAdded;    nAdded × (varint uidDelta + unit fields as above)
     varint nChanged;  nChanged × (varint uidDelta, u8 mask, fields present per mask:
-        1 pos: svarint dx, svarint dz | 2 heading: u8 | 4 hp: u8 | 8 build: u8 | 16 team: varint | 32 def: varint)
+        1 pos: svarint dx, svarint dz | 2 heading: u8 | 4 hp: u8 | 8 build: u8 | 16 team: varint | 32 def: varint |
+        64 work: u8 work [u16 workX, u16 workZ])                        (64: v2)
 varint nProjectileSamples
     per sample: varint frame - previous (first from frameStart), varint n,
-                n × (varint weaponDefId + 1, varint team + 1, u16 x, u16 z, i8 vx, i8 vz)
+                n × (varint weaponDefId + 1, varint team + 1, u16 x, u16 z, svarint vx·4, svarint vz·4)
+                (v1: i8 vx, i8 vz in whole elmos per frame)
 ```
 
 Units:

@@ -73,3 +73,32 @@ describe('maps', () => {
     expect(findLocalMap('Odd Map 1', [maps], 'odd-name.sdz')).toBe(join(maps, 'odd-name.sdz'))
   })
 })
+
+describe('game assets', () => {
+  it('parses icontypes.lua including scav variants', async () => {
+    const { parseIconTypes } = await import('../src/main/game-assets')
+    const lua = `local icontypes = {
+	armaak = {
+		bitmap = "icons/bot_amph_t2_aa.png",
+		size = 1.41999996
+	},
+	legjam ={
+		bitmap ="icons/jammer.png",
+	},
+	default = {
+		size = 1,
+		radiusadjust = 1,
+	},
+}
+local newIcontypes = {}
+for name, params in pairs(icontypes) do
+	newIcontypes[name..'_scav'] = { size = params.size or 1 }
+end
+return newIcontypes`
+    const t = parseIconTypes(lua)
+    expect(t.armaak).toEqual({ bitmap: 'icons/bot_amph_t2_aa.png', size: 1.41999996 })
+    expect(t.legjam).toEqual({ bitmap: 'icons/jammer.png', size: 1 })
+    expect(t.armaak_scav.bitmap).toBe('icons/inverted/bot_amph_t2_aa.png')
+    expect(t.default.bitmap).toBe('')
+  })
+})

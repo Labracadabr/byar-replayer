@@ -11,6 +11,10 @@ export interface UnitView {
   rotation: number
   hp: number // 0..1
   build: number // 0..1
+  /** WORK_* kind and target position (build power line) */
+  work: number
+  wx: number
+  wz: number
 }
 
 export interface SamplePair {
@@ -45,7 +49,7 @@ export function headingToRotation(h8: number): number {
 
 function view(out: UnitView[], k: number): UnitView {
   let v = out[k]
-  if (!v) out[k] = v = { uid: 0, def: 0, team: 0, x: 0, z: 0, rotation: 0, hp: 1, build: 1 }
+  if (!v) out[k] = v = { uid: 0, def: 0, team: 0, x: 0, z: 0, rotation: 0, hp: 1, build: 1, work: 0, wx: 0, wz: 0 }
   return v
 }
 
@@ -67,6 +71,9 @@ export function interpolate(p: SamplePair, out: UnitView[]): number {
     let h = s0.heading[i]
     let hp = s0.hp[i]
     let build = s0.build[i]
+    const work = s0.work ? s0.work[i] : 0
+    let wx = s0.wx ? s0.wx[i] : 0
+    let wz = s0.wz ? s0.wz[i] : 0
     if (s1 && alpha > 0) {
       while (j < s1.n && s1.uid[j] < uid) j++
       if (j < s1.n && s1.uid[j] === uid) {
@@ -76,6 +83,11 @@ export function interpolate(p: SamplePair, out: UnitView[]): number {
         h += dh * alpha
         hp += (s1.hp[j] - hp) * alpha
         build += (s1.build[j] - build) * alpha
+        // a moving repair/capture target is followed; a new task snaps at the next sample
+        if (work && s1.work && s1.work[j] === work) {
+          wx += (s1.wx[j] - wx) * alpha
+          wz += (s1.wz[j] - wz) * alpha
+        }
       }
     }
     v.x = x
@@ -83,6 +95,9 @@ export function interpolate(p: SamplePair, out: UnitView[]): number {
     v.rotation = headingToRotation(h)
     v.hp = hp / 255
     v.build = build / 100
+    v.work = work
+    v.wx = wx
+    v.wz = wz
   }
   return s0.n
 }

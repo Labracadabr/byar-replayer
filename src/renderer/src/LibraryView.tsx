@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { isResumedGame, simStatusOf } from '@shared/sim-status'
 import type { Preset, ReplaySummary, ScanProgress, SimStatus } from '@shared/types'
 import { DetailPanel } from './DetailPanel'
+import { RosterTooltip } from './RosterTooltip'
 import { allyGroups, formatDate, formatDuration, PRESET_LABEL, winnerLabel } from './format'
 
 const SIM_LABEL: Record<SimStatus, string> = {
@@ -114,6 +115,7 @@ export function LibraryView({
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'date', desc: true })
   const [dragging, setDragging] = useState(false)
   const [importMsg, setImportMsg] = useState<string | null>(null)
+  const [roster, setRoster] = useState<{ r: ReplaySummary; x: number; y: number } | null>(null)
 
   const reload = useCallback(() => void window.api.listReplays().then(setReplays), [])
   useEffect(() => {
@@ -197,6 +199,7 @@ export function LibraryView({
       onDrop={onDrop}
     >
       {dragging && <div className="drop-overlay">Drop .sdfz replays to add them</div>}
+      {roster && <RosterTooltip r={roster.r} x={roster.x} y={roster.y} />}
       <header className="toolbar">
         <input
           className="search"
@@ -294,7 +297,11 @@ export function LibraryView({
                   <td>
                     <MapCell r={r} />
                   </td>
-                  <td>
+                  <td
+                    className="players-cell"
+                    onMouseMove={(e) => r.players.length > 0 && setRoster({ r, x: e.clientX, y: e.clientY })}
+                    onMouseLeave={() => setRoster(null)}
+                  >
                     <Teams r={r} />
                   </td>
                   <td>{PRESET_LABEL[r.preset]}</td>

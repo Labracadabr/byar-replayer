@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EVENT_DEATH, type StreamHeader, type StreamMeta } from '@shared/stream/format'
 import { interpolate, projectilesAt, samplePair, type UnitView } from '@shared/stream/interpolate'
+import type { MapMarker, ReplayDetail } from '@shared/types'
 import { formatDuration } from '../format'
-import { type DeathFlash, PlayerStage } from './stage'
+import { RankIcon } from '../RosterTooltip'
+import { type DeathFlash, type MarkView, PlayerStage, WORK_COLORS } from './stage'
+import { buildMarks } from './marks'
 import { StreamClient } from './stream-client'
 
 const FPS = 30
 const SPEEDS = [1, 2, 4, 8, 16, 32, 64]
 const FLASH_FRAMES = 45
+/** consecutive line segments by one player within this many frames are one "drawing" in the chat feed */
+const DRAWING_GAP = 90
+const SPEC_COLOR = '#c8ccd4'
+const WORK_LABEL: Record<number, string> = { 1: 'Building', 2: 'Repairing', 3: 'Reclaiming', 4: 'Resurrecting', 5: 'Capturing' }
 
 function clock(frame: number): string {
   return formatDuration(Math.max(0, (frame / FPS) * 1000)).replace(/^–$/, '0:00')
@@ -25,14 +32,31 @@ interface Hover {
   y: number
 }
 
+/** One line in the side panel feed: chat message, ping/marker, or a drawing. */
+interface FeedItem {
+  frame: number
+  playerId: number
+  name: string
+  kind: 'chat' | 'ping' | 'drawing'
+  type?: 'ally' | 'spec' | 'global' | 'self'
+  text: string
+  x?: number
+  z?: number
+}
+
 export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Element {
   const canvasHost = useRef<HTMLDivElement>(null)
   const [data, setData] = useState<{ header: StreamHeader; meta: StreamMeta } | null>(null)
+  const [replay, setReplay] = useState<ReplayDetail | null>(null)
+  const [markers, setMarkers] = useState<MapMarker[] | null>(null)
+  const [timelineChat, setTimelineChat] = useState<FeedItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [frame, setFrame] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(8)
   const [hpBars, setHpBars] = useState(true)
+  const [buildLines, setBuildLines] = useState(true)
+  const [iconScale, setIconScale] = useState(1)
   const [overlays, setOverlays] = useState({ height: false, metal: false })
   const [overlayMissing, setOverlayMissing] = useState<string | null>(null)
   const [loadingChunk, setLoadingChunk] = useState(false)
@@ -42,8 +66,7 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
   const frameRef = useRef(0)
   const playingRef = useRef(false)
   const speedRef = useRef(8)
-  const hpBarsRef = useRef(true)
-  const hoverRef = useRef<Hover | null>(null)
+  const optsRef = useRef({ hpBars: true, buildLines: true, iconScale: 1, hoveredUid: -1 })
   const unitsRef = useRef<UnitView[]>([])
   const countRef = useRef(0)
   const clientRef = useRef<StreamClient | null>(null)
@@ -51,8 +74,7 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
 
   playingRef.current = playing
   speedRef.current = speed
-  hpBarsRef.current = hpBars
-  hoverRef.current = hover
+  optsRef.current = { hpBars, buildLines, iconScale, hoveredUid: hover?.uid ?? -1 }
 
   const seek = useCallback((f: number) => {
     const h = clientRef.current?.header
@@ -86,12 +108,24 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
         if (disposed) return
         stage = new PlayerStage(canvasHost.current!, header, meta)
         stageRef.current = stage
-        await stage.init(`brv://minimap/${replayId}`, `brv://overlay/${replayId}`)
+        await stage.init(`brv://minimap/${replayId}`, `brv://overlay/${replayId}`, `brv://game/${replayId}`)
         frameRef.current = header.firstFrame
         setData({ header, meta })
         void client.load(0)
       })
       .catch((e: Error) => setError(e.message))
+    // players (colors, ranks) and the chat/ping timeline come from the replay itself
+    void window.api.getReplay(replayId).then((r) => !disposed && setReplay(r))
+    void window.api
+      .getTimeline(replayId)
+      .then((t) => {
+        if (disposed) return
+        setMarkers(t.markers)
+        setTimelineChat(
+          t.chat.map((c) => ({ frame: c.frame, playerId: c.playerId, name: c.name, kind: 'chat', type: c.type, text: c.message }))
+        )
+      })
+      .catch(() => !disposed && setMarkers([])) // demo file gone: chat falls back to the recording, no pings
     return () => {
       disposed = true
       stage?.destroy()
@@ -100,6 +134,40 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
       clientRef.current = null
     }
   }, [replayId])
+
+  // player id -> color / name / rank
+  const players = useMemo(() => {
+    const byId = new Map<number, { name: string; color: string; teamId: number; rank?: number }>()
+    for (const p of replay?.players ?? []) if (p.playerId >= 0) byId.set(p.playerId, { name: p.name, color: p.color, teamId: p.teamId, rank: p.rank })
+    return byId
+  }, [replay])
+  const playerColor = useCallback((id: number): string => players.get(id)?.color ?? SPEC_COLOR, [players])
+
+  const marks = useMemo(() => buildMarks(markers ?? []), [markers])
+  const markColors = useMemo(() => marks.map((m) => parseInt(playerColor(m.playerId).slice(1), 16)), [marks, playerColor])
+
+  // chat + pings + drawings, sorted by frame
+  const feed = useMemo((): FeedItem[] => {
+    const chat: FeedItem[] =
+      timelineChat ??
+      (data?.meta.chat ?? []).map((c) => ({ frame: c.frame, playerId: c.playerId, name: c.name, kind: 'chat', type: c.type, text: c.message }))
+    const items = [...chat]
+    let lastDraw: { playerId: number; frame: number; item: FeedItem } | null = null
+    for (const m of markers ?? []) {
+      const name = players.get(m.playerId)?.name ?? `Player ${m.playerId}`
+      if (m.kind === 'point') {
+        items.push({ frame: m.frame, playerId: m.playerId, name, kind: 'ping', text: m.label || 'ping', x: m.x, z: m.z })
+      } else if (m.kind === 'line') {
+        if (lastDraw && lastDraw.playerId === m.playerId && m.frame - lastDraw.frame <= DRAWING_GAP) lastDraw.frame = m.frame
+        else {
+          const item: FeedItem = { frame: m.frame, playerId: m.playerId, name, kind: 'drawing', text: 'drew on the map', x: m.x, z: m.z }
+          items.push(item)
+          lastDraw = { playerId: m.playerId, frame: m.frame, item }
+        }
+      }
+    }
+    return items.sort((a, b) => a.frame - b.frame)
+  }, [timelineChat, data, markers, players])
 
   // deaths sorted by frame for the flash effect
   const deaths = useMemo(() => {
@@ -121,6 +189,7 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
     let last = performance.now()
     let lastUi = 0
     const flashes: DeathFlash[] = []
+    const markViews: MarkView[] = []
     const tick = (now: number): void => {
       raf = requestAnimationFrame(tick)
       const dt = Math.min(250, now - last)
@@ -162,10 +231,24 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
         const d = deaths[i]
         flashes.push({ x: d.x, z: d.z, team: d.team, big: d.big, age: f - d.frame })
       }
-      stageRef.current?.render(unitsRef.current, n, proj, proj ? f - proj.frame : 0, flashes, {
-        hpBars: hpBarsRef.current,
-        hoveredUid: hoverRef.current?.uid ?? -1
-      })
+      // map marks placed and not yet erased
+      markViews.length = 0
+      for (let i = 0; i < marks.length; i++) {
+        const m = marks[i]
+        if (m.frame > f || f >= m.erasedAt) continue
+        markViews.push({
+          id: m.id,
+          kind: m.kind === 'line' ? 'line' : 'point',
+          x: m.x,
+          z: m.z,
+          x2: m.x2,
+          z2: m.z2,
+          label: m.label,
+          color: markColors[i],
+          age: f - m.frame
+        })
+      }
+      stageRef.current?.render(unitsRef.current, n, proj, proj ? f - proj.frame : 0, flashes, markViews, optsRef.current)
       if (now - lastUi > 100) {
         lastUi = now
         setFrame(f)
@@ -174,7 +257,7 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [data, deaths])
+  }, [data, deaths, marks, markColors])
 
   // keyboard shortcuts
   useEffect(() => {
@@ -220,6 +303,15 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
         case 'h':
           setHpBars((v) => !v)
           break
+        case 'b':
+          setBuildLines((v) => !v)
+          break
+        case '[':
+          setIconScale((s) => Math.max(0.5, Math.round((s - 0.1) * 10) / 10))
+          break
+        case ']':
+          setIconScale((s) => Math.min(2.5, Math.round((s + 0.1) * 10) / 10))
+          break
         case 'f':
           stageRef.current?.fit()
           break
@@ -261,6 +353,14 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
     setHover(uid >= 0 ? { uid, x, y } : null)
   }
 
+  const jumpTo = useCallback(
+    (item: FeedItem) => {
+      seek(item.frame)
+      if (item.x !== undefined && item.z !== undefined) stageRef.current?.centerOn(item.x, item.z)
+    },
+    [seek]
+  )
+
   if (error)
     return (
       <div className="player-view">
@@ -287,7 +387,17 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
           )}
           {hoveredUnit && meta && hover && <Tooltip unit={hoveredUnit} meta={meta} x={hover.x} y={hover.y} />}
         </div>
-        {meta && header && <SidePanel meta={meta} frame={frame} onSeek={seek} />}
+        {meta && header && (
+          <SidePanel
+            meta={meta}
+            replay={replay}
+            replayId={replayId}
+            frame={frame}
+            feed={feed}
+            playerColor={playerColor}
+            onJump={jumpTo}
+          />
+        )}
       </div>
       {header && (
         <Timeline
@@ -296,6 +406,7 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
           playing={playing}
           speed={speed}
           hpBars={hpBars}
+          buildLines={buildLines}
           overlays={overlays}
           fights={fights}
           onOverlay={toggleOverlay}
@@ -306,6 +417,7 @@ export function PlayerView({ replayId, title, onClose }: Props): React.JSX.Eleme
           onSeek={seek}
           onSpeed={setSpeed}
           onHpBars={setHpBars}
+          onBuildLines={setBuildLines}
           onStep={(d) => {
             setPlaying(false)
             seek(frameRef.current + d * header.sampleInterval)
@@ -324,7 +436,8 @@ function PlayerTop({ title, onClose }: { title: string; onClose(): void }): Reac
       </button>
       <span className="player-title">{title}</span>
       <span className="muted small">
-        Space play/pause · ←/→ ±10 s (Shift ±60 s) · , . step · +/− speed · H HP bars · T height · M metal · F fit
+        Space play/pause · ←/→ ±10 s (Shift ±60 s) · , . step · +/− speed · H HP bars · B build power · [ ] icon size · T
+        height · M metal · F fit
       </span>
     </header>
   )
@@ -341,6 +454,9 @@ function Tooltip({ unit, meta, x, y }: { unit: UnitView; meta: StreamMeta; x: nu
         HP {Math.round(unit.hp * (def?.health ?? 0))} / {def?.health ?? '?'}
         {unit.build < 1 && ` · building ${Math.round(unit.build * 100)}%`}
       </div>
+      {unit.work > 0 && (
+        <div style={{ color: '#' + (WORK_COLORS[unit.work] ?? 0xffffff).toString(16).padStart(6, '0') }}>{WORK_LABEL[unit.work]}</div>
+      )}
       <div>
         <span className="pdot" style={{ background: team?.color }} />
         {team?.name ?? `Team ${unit.team}`}
@@ -355,6 +471,7 @@ function Timeline(props: {
   playing: boolean
   speed: number
   hpBars: boolean
+  buildLines: boolean
   overlays: { height: boolean; metal: boolean }
   fights: number[]
   onOverlay(kind: 'height' | 'metal'): void
@@ -362,6 +479,7 @@ function Timeline(props: {
   onSeek(f: number): void
   onSpeed(s: number): void
   onHpBars(v: boolean): void
+  onBuildLines(v: boolean): void
   onStep(dir: number): void
 }): React.JSX.Element {
   const { header: h, frame } = props
@@ -413,6 +531,10 @@ function Timeline(props: {
         <input type="checkbox" checked={props.hpBars} onChange={(e) => props.onHpBars(e.target.checked)} />
         HP bars
       </label>
+      <label className="check small" title="Lines from builders to what they build, repair, reclaim or resurrect (B)">
+        <input type="checkbox" checked={props.buildLines} onChange={(e) => props.onBuildLines(e.target.checked)} />
+        Build power
+      </label>
       <label className="check small" title="Shaded height map (T)">
         <input type="checkbox" checked={props.overlays.height} onChange={() => props.onOverlay('height')} />
         Height
@@ -425,7 +547,16 @@ function Timeline(props: {
   )
 }
 
-function SidePanel({ meta, frame, onSeek }: { meta: StreamMeta; frame: number; onSeek(f: number): void }): React.JSX.Element {
+function SidePanel(props: {
+  meta: StreamMeta
+  replay: ReplayDetail | null
+  replayId: number
+  frame: number
+  feed: FeedItem[]
+  playerColor(id: number): string
+  onJump(item: FeedItem): void
+}): React.JSX.Element {
+  const { meta, replay, frame, feed } = props
   const statIdx = Math.floor(frame / meta.stats.interval)
   const allies = new Map<number, typeof meta.teams>()
   for (const t of meta.teams) {
@@ -433,12 +564,16 @@ function SidePanel({ meta, frame, onSeek }: { meta: StreamMeta; frame: number; o
     if (!allies.has(t.allyTeam)) allies.set(t.allyTeam, [])
     allies.get(t.allyTeam)!.push(t)
   }
-  const chat = meta.chat.filter((c) => c.frame <= frame)
+  // team -> human player (for the rank chevron)
+  const rankOf = new Map<number, number | undefined>()
+  for (const p of replay?.players ?? []) if (!p.isAI) rankOf.set(p.teamId, p.rank)
+  let shown = 0
+  while (shown < feed.length && feed[shown].frame <= frame) shown++
   const chatEnd = useRef<HTMLDivElement>(null)
   // block body: scrollIntoView returns a Promise in current Chromium, which React would treat as a cleanup
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ block: 'end' })
-  }, [chat.length])
+  }, [shown])
   const stat = (teamId: number, key: 'units' | 'army'): number => {
     const arr = meta.stats.teams[teamId]?.[key]
     if (!arr || arr.length === 0) return 0
@@ -464,6 +599,7 @@ function SidePanel({ meta, frame, onSeek }: { meta: StreamMeta; frame: number; o
               {teams.map((t) => (
                 <div key={t.teamId} className="side-row">
                   <span className="side-name">
+                    {t.isAI ? <span className="rank-icon" /> : <RankIcon replayId={props.replayId} rank={rankOf.get(t.teamId)} />}
                     <span className="pdot" style={{ background: t.color }} />
                     {t.name}
                   </span>
@@ -477,14 +613,33 @@ function SidePanel({ meta, frame, onSeek }: { meta: StreamMeta; frame: number; o
       <section className="side-chat">
         <h3>Chat</h3>
         <div className="chat-list">
-          {chat.length === 0 && <div className="muted small">No messages yet.</div>}
-          {chat.map((c, i) => (
-            <div key={i} className={`chat-line chat-${c.type}`} onClick={() => onSeek(c.frame)} title="Jump here">
-              <span className="muted mono small">{clock(c.frame)}</span> <b>{c.name || 'Host'}</b>
-              {c.type === 'ally' && <span className="muted small"> (allies)</span>}
-              {c.type === 'spec' && <span className="muted small"> (spec)</span>}: {c.message}
-            </div>
-          ))}
+          {shown === 0 && <div className="muted small">No messages yet.</div>}
+          {feed.slice(0, shown).map((c, i) => {
+            const color = c.name ? props.playerColor(c.playerId) : SPEC_COLOR
+            return (
+              <div
+                key={i}
+                className={`chat-line chat-${c.kind}${c.type ? ` chat-${c.type}` : ''}`}
+                onClick={() => props.onJump(c)}
+                title={c.kind === 'chat' ? 'Jump here' : 'Jump here and show it on the map'}
+              >
+                <span className="muted mono small">{clock(c.frame)}</span>{' '}
+                <b style={{ color }}>{c.name || 'Host'}</b>
+                {c.kind === 'chat' && c.type === 'ally' && <span className="muted small"> (allies)</span>}
+                {c.kind === 'chat' && c.type === 'spec' && <span className="muted small"> (spec)</span>}
+                {c.kind === 'chat' ? (
+                  <>: {c.text}</>
+                ) : c.kind === 'ping' ? (
+                  <span className="chat-ping">
+                    {' '}
+                    📍 {c.text === 'ping' ? 'pinged the map' : <>marked “{c.text}”</>}
+                  </span>
+                ) : (
+                  <span className="chat-ping"> ✎ {c.text}</span>
+                )}
+              </div>
+            )
+          })}
           <div ref={chatEnd} />
         </div>
       </section>

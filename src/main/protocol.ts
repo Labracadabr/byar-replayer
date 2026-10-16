@@ -2,10 +2,14 @@
 //   brv://stream/<replayId>   the replay's state stream (.brvs)
 //   brv://minimap/<replayId>[?thumb=1]     the map's minimap PNG (extracted and cached on first request)
 //   brv://overlay/<replayId>/height|metal  shaded height map / metal map PNGs
+//   brv://game/<replayId>/<path>           in-game artwork of the replay's game version (icons, ranks, icontypes.json)
 import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { nativeImage, protocol } from 'electron'
 import { findLocalMap } from './deps/maps'
+import { ourDataDir } from './deps/resolver'
+import { ensureGameAssets } from './game-assets'
+import { join, normalize } from 'node:path'
 import { ensureMapImages, type MapImage, mapImagePath } from './maps/minimap'
 import type { Library } from './library'
 import type { SimQueue } from './sim/queue'
@@ -95,6 +99,18 @@ export function handleProtocol(deps: {
         const png = await mapImage(library, id, sub)
         if (!png) return notFound('map not installed')
         return new Response(await readFile(png), { headers: IMAGE })
+      }
+      if (url.hostname === 'game') {
+        const replay = library.get(id)
+        if (!replay) return notFound('unknown replay')
+        const rel = normalize(decodeURIComponent(url.pathname.replace(/^\/+\d+\//, ''))).toLowerCase()
+        if (rel.startsWith('..')) return notFound('bad path')
+        const s = deps.settings()
+        const dir = ensureGameAssets(replay.gameVersion, [ourDataDir(s), s.barDataDir], join(s.workDir, 'cache', 'game'))
+        const file = join(dir, rel)
+        if (!existsSync(file)) return notFound('no such asset')
+        const type = rel.endsWith('.json') ? 'application/json' : 'image/png'
+        return new Response(await readFile(file), { headers: { ...IMAGE, 'content-type': type } })
       }
       return notFound('unknown resource')
     } catch (e) {

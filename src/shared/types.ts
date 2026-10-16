@@ -62,6 +62,10 @@ export interface JobInfo {
 }
 
 export interface ReplayPlayer {
+  /** demo player number (chat / map pings refer to it); -1 for AIs */
+  playerId: number
+  /** in-game rank 0..7 (chevrons); undefined for AIs */
+  rank?: number
   name: string
   teamId: number
   allyTeamId: number
@@ -134,6 +138,23 @@ export interface ReplayDeps {
   map: DepState
 }
 
+/** A map ping/marker (point, with optional label), a drawn line segment, or an erase, from the demo's map-draw packets */
+export interface MapMarker {
+  frame: number
+  playerId: number
+  kind: 'point' | 'line' | 'erase'
+  x: number
+  z: number
+  x2?: number
+  z2?: number
+  label?: string
+}
+
+export interface ReplayTimeline {
+  chat: import('./stream/format').ChatLine[]
+  markers: MapMarker[]
+}
+
 /** API exposed to the renderer on window.api */
 export interface Api {
   getSettings(): Promise<SettingsState>
@@ -141,6 +162,8 @@ export interface Api {
   pickFolder(title: string, defaultPath?: string): Promise<string | null>
   listReplays(): Promise<ReplaySummary[]>
   getReplay(id: number): Promise<ReplayDetail | null>
+  /** Chat + map pings/drawings with exact frames, read from the demo file */
+  getTimeline(id: number): Promise<ReplayTimeline>
   setFavorite(id: number, favorite: boolean): Promise<void>
   setNote(id: number, note: string): Promise<void>
   rescan(): Promise<void>

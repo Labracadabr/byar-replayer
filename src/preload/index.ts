@@ -13,6 +13,7 @@ const api: Api = {
   pickFolder: (title, defaultPath) => ipcRenderer.invoke('dialog:pickFolder', title, defaultPath),
   listReplays: () => ipcRenderer.invoke('library:list'),
   getReplay: (id) => ipcRenderer.invoke('library:get', id),
+  getTimeline: (id) => ipcRenderer.invoke('library:timeline', id),
   setFavorite: (id, favorite) => ipcRenderer.invoke('library:setFavorite', id, favorite),
   setNote: (id, note) => ipcRenderer.invoke('library:setNote', id, note),
   rescan: () => ipcRenderer.invoke('library:rescan'),

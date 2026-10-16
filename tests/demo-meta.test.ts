@@ -4,6 +4,7 @@ import type { ReplayPlayer } from '@shared/types'
 import { classifyPreset, readDemoMeta } from '../src/main/demo-meta'
 
 const p = (allyTeamId: number, isAI = false): ReplayPlayer => ({
+  playerId: 0,
   name: 'x',
   teamId: 0,
   allyTeamId,
@@ -63,5 +64,20 @@ describe.skipIf(!existsSync(DEMOS))('saved-game detection', () => {
     expect(resumed.firstFrame).toBe(47472)
     const normal = await readDemoMeta(finished)
     expect(normal.firstFrame).toBe(0)
+  })
+})
+
+describe.skipIf(!existsSync(DEMOS))('timeline (chat + map drawings)', () => {
+  it('stamps chat and map draws with exact frames', async () => {
+    const { readDemoTimeline } = await import('../src/main/demo-meta')
+    const t = await readDemoTimeline(DEMOS + '2026-03-25_13-31-29-077_Supreme Isthmus v2.1_2025.06.19.sdfz')
+    expect(t.markers.length).toBe(397)
+    expect(t.markers.filter((m) => m.kind === 'line').length).toBeGreaterThan(100)
+    const named = (await readDemoTimeline(finished)).chat.filter((c) => c.name)
+    expect(named.length).toBeGreaterThan(50)
+    // frames are monotonic and within the game
+    const frames = named.map((c) => c.frame)
+    expect([...frames].sort((a, b) => a - b)).toEqual(frames)
+    expect(Math.max(...frames)).toBeLessThanOrEqual(30600)
   })
 })

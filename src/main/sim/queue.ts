@@ -182,7 +182,8 @@ export class SimQueue extends EventEmitter {
   }
 
   unitDefsPath(gameVersion: string): string {
-    return join(this.settings().workDir, 'cache', 'unitdefs', gameVersion.replace(/[^\w.-]+/g, '_') + '.txt')
+    // .v2: weapon colors/sizes were added to the dump; older cache files are dumped again
+    return join(this.settings().workDir, 'cache', 'unitdefs', gameVersion.replace(/[^\w.-]+/g, '_') + '.v2.txt')
   }
 
   private get(jobId: number): JobInfo {

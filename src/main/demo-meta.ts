@@ -1,10 +1,11 @@
 // Extracts library metadata from an .sdfz using sdfz-demo-parser (offline; no API needed).
 import { DemoModel, DemoParser } from 'sdfz-demo-parser'
 import type { ChatLine } from '@shared/stream/format'
+import type { MapMarker, ReplayTimeline } from '@shared/types'
 import type { Preset, ReplayPlayer } from '@shared/types'
 
 /** Bump when the extracted fields change, so the library re-parses existing rows. */
-export const PARSER_VERSION = 3
+export const PARSER_VERSION = 4
 
 const SIM_FPS = 30
 
@@ -89,6 +90,8 @@ export async function readDemoMeta(path: string): Promise<DemoMeta> {
   const colorOf = (teamId: number, own?: RGB): string => hex(luaColors.get(teamId) ?? own ?? scriptColors.get(teamId))
   const players: ReplayPlayer[] = [
     ...info.players.map((p) => ({
+      playerId: p.playerId,
+      rank: p.rank ?? undefined,
       name: p.name,
       teamId: p.teamId,
       allyTeamId: p.allyTeamId,
@@ -98,6 +101,7 @@ export async function readDemoMeta(path: string): Promise<DemoMeta> {
       skill: p.skill || undefined
     })),
     ...info.ais.map((a) => ({
+      playerId: -1,
       name: a.name || a.shortName,
       teamId: a.teamId,
       allyTeamId: a.allyTeamId,
@@ -126,15 +130,43 @@ export async function readDemoMeta(path: string): Promise<DemoMeta> {
   }
 }
 
-/** Chat log with game-time frames (the recorder doesn't capture chat; the demo has it with exact times). */
-export async function readDemoChat(path: string): Promise<ChatLine[]> {
-  const parser = new DemoParser({ includePackets: [] })
+/** Chat and map drawings stamped with exact sim frames (counted from KEYFRAME/NEWFRAME packets, pause-proof). */
+export async function readDemoTimeline(path: string): Promise<ReplayTimeline> {
+  const ID = DemoModel.Packet.ID
+  // keep frame packets: they are excluded by default
+  const parser = new DemoParser({ includePackets: [], excludePackets: [ID.SYNCRESPONSE, ID.PLAYERINFO] })
+  let frame = 0
+  const chat: ChatLine[] = []
+  const markers: MapMarker[] = []
+  parser.onPacket.add((packet) => {
+    if (packet.id === ID.KEYFRAME && packet.data) frame = (packet.data as { frameNum: number }).frameNum
+    else if (packet.id === ID.NEWFRAME) frame++
+    else if (packet.id === ID.CHAT && packet.data) {
+      const d = packet.data as { fromId: number; toId: number; message: string }
+      const type = d.toId === 252 ? 'ally' : d.toId === 253 ? 'spec' : d.toId === 254 ? 'global' : 'self'
+      if (type !== 'self') chat.push({ frame, playerId: d.fromId, name: '', type, message: d.message.trim() })
+    } else if (packet.id === ID.MAPDRAW && packet.data) {
+      const d = packet.data as { playerNum: number; mapDrawAction: number; x: number; z: number; x2?: number; z2?: number; label?: string }
+      const kind = d.mapDrawAction === 0 ? 'point' : d.mapDrawAction === 2 ? 'line' : 'erase'
+      markers.push({
+        frame,
+        playerId: d.playerNum,
+        kind,
+        x: d.x,
+        z: d.z,
+        ...(kind === 'line' ? { x2: d.x2 ?? d.x, z2: d.z2 ?? d.z } : {}),
+        ...(kind === 'point' ? { label: (d.label ?? '').trim() } : {})
+      })
+    }
+  })
   const demo = await parser.parseDemo(path)
-  return (demo.chatlog ?? []).map((c) => ({
-    frame: Math.round((c.timeMs * SIM_FPS) / 1000),
-    playerId: c.playerId,
-    name: c.name,
-    type: c.type,
-    message: c.message
-  }))
+  const names = new Map<number, string>()
+  for (const p of [...demo.info.players, ...demo.info.spectators]) names.set(p.playerId, p.name)
+  for (const c of chat) c.name = names.get(c.playerId) ?? ''
+  return { chat, markers }
+}
+
+/** Chat log for the stream converter. */
+export async function readDemoChat(path: string): Promise<ChatLine[]> {
+  return (await readDemoTimeline(path)).chat
 }

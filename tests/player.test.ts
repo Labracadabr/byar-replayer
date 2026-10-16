@@ -16,7 +16,10 @@ function sample(frame: number, units: [number, number, number, number][]): Sampl
     z: new Uint16Array(n),
     heading: new Uint8Array(n),
     hp: new Uint8Array(n).fill(255),
-    build: new Uint8Array(n).fill(100)
+    build: new Uint8Array(n).fill(100),
+    work: new Uint8Array(n),
+    wx: new Uint16Array(n),
+    wz: new Uint16Array(n)
   }
   units.forEach(([uid, x, z, h], i) => {
     s.uid[i] = uid
@@ -34,8 +37,8 @@ const proj = (frame: number): ProjectileSample => ({
   team: new Uint8Array(),
   x: new Uint16Array(),
   z: new Uint16Array(),
-  vx: new Int8Array(),
-  vz: new Int8Array()
+  vx: new Float32Array(),
+  vz: new Float32Array()
 })
 
 describe('playback interpolation', () => {
@@ -85,5 +88,25 @@ describe('DXT1 decoding', () => {
     expect([...rgba.subarray(0, 4)]).toEqual([255, 0, 0, 255])
     expect([...rgba.subarray(4, 8)]).toEqual([0, 0, 255, 255])
     expect([...rgba.subarray(8, 12)]).toEqual([170, 0, 85, 255])
+  })
+})
+
+describe('map marks', () => {
+  it('erases nearby points and lines, but not far or later ones', async () => {
+    const { buildMarks } = await import('../src/renderer/src/player/marks')
+    const marks = buildMarks([
+      { frame: 10, playerId: 1, kind: 'point', x: 100, z: 100, label: 'here' },
+      { frame: 20, playerId: 1, kind: 'line', x: 0, z: 500, x2: 1000, z2: 500 },
+      { frame: 30, playerId: 2, kind: 'point', x: 3000, z: 3000 },
+      { frame: 40, playerId: 2, kind: 'erase', x: 150, z: 120 }, // near the point
+      { frame: 50, playerId: 1, kind: 'erase', x: 600, z: 560 }, // near the middle of the line
+      { frame: 60, playerId: 1, kind: 'point', x: 600, z: 560 } // placed after the erase: stays
+    ])
+    expect(marks.map((m) => [m.frame, m.erasedAt])).toEqual([
+      [10, 40],
+      [20, 50],
+      [30, Infinity],
+      [60, Infinity]
+    ])
   })
 })

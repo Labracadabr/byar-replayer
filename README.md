@@ -30,8 +30,10 @@ recordings, caches) goes in the work folder, which defaults to a `bar-replay-vie
 The work folder must be an ASCII-only path.
 
 The player (`src/renderer/src/player/`) loads a recording over the app's `brv://` protocol, decodes it in a Web
-Worker and draws it with PixiJS. Keys: Space play/pause, ←/→ ±10 s (Shift ±60 s), `,`/`.` step, +/− speed, H HP bars,
-F fit, Esc back to the library.
+Worker and draws it with PixiJS, using the game's own strategic icons and rank chevrons (extracted per game version
+from the rapid package). Keys: Space play/pause, ←/→ ±10 s (Shift ±60 s), `,`/`.` step, +/− speed, H HP bars,
+B build power lines, `[`/`]` icon size, T height map, M metal map, F fit, Esc back to the library. Chat names use
+player colors; map pings and drawings show on the map and in the chat (click to jump there).
 
 `spike/` holds the milestone-0 Python scripts: demo header reader, rapid package reader, and headless runner.
 `scripts/cdp.mjs` takes screenshots of, and runs JS in, the running app over the DevTools protocol (start the app with

@@ -17,6 +17,6 @@ export function openStream(path: string): StreamFile {
   return {
     header,
     meta: decodeMeta(blob(header.meta.offset, header.meta.length)),
-    chunk: (i) => decodeChunk(blob(header.chunks[i].offset, header.chunks[i].length))
+    chunk: (i) => decodeChunk(blob(header.chunks[i].offset, header.chunks[i].length), header.formatVersion)
   }
 }

@@ -13,7 +13,19 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }))
 function unitAt(s: Sample, uid: number): UnitState | undefined {
   for (let i = 0; i < s.n; i++)
     if (s.uid[i] === uid)
-      return { uid, def: s.def[i], team: s.team[i], x: s.x[i], z: s.z[i], heading: s.heading[i], hp: s.hp[i], build: s.build[i] }
+      return {
+        uid,
+        def: s.def[i],
+        team: s.team[i],
+        x: s.x[i],
+        z: s.z[i],
+        heading: s.heading[i],
+        hp: s.hp[i],
+        build: s.build[i],
+        work: s.work[i],
+        wx: s.wx[i],
+        wz: s.wz[i]
+      }
   return undefined
 }
 
@@ -37,24 +49,25 @@ describe('bytes', () => {
 describe('chunk encoding', () => {
   it('round-trips keyframe + deltas with adds, removals and changes', () => {
     const u = (uid: number, x: number, extra: Partial<UnitState> = {}): UnitState => ({
-      uid, def: 10 + uid, team: uid % 3, x, z: 1000 + uid, heading: 7, hp: 255, build: 100, ...extra
+      uid, def: 10 + uid, team: uid % 3, x, z: 1000 + uid, heading: 7, hp: 255, build: 100, work: 0, wx: 0, wz: 0, ...extra
     })
     const samples: EncodedSample[] = [
       { frame: 600, units: [u(1, 100), u(2, 200), u(5, 500)] },
       { frame: 615, units: [u(1, 110), u(2, 200), u(5, 500, { hp: 30 })] }, // move + hp change
       { frame: 630, units: [u(2, 200, { team: 1 }), u(5, 499), u(7, 700, { build: 10 })] }, // 1 removed, 7 added
-      { frame: 645, units: [u(2, 200, { team: 1 }), u(5, 499), u(7, 700, { build: 55, heading: 200 })] }
+      { frame: 645, units: [u(2, 200, { team: 1 }), u(5, 499, { work: 3, wx: 4000, wz: 123 }), u(7, 700, { build: 55, heading: 200 })] },
+      { frame: 660, units: [u(2, 200, { team: 1 }), u(5, 499), u(7, 700, { build: 55, heading: 200 })] } // work stops
     ]
-    const projectiles = [{ frame: 605, list: [{ weapon: 3, team: 1, x: 10, z: 20, vx: -4, vz: 12 }] }]
+    const projectiles = [{ frame: 605, list: [{ weapon: 3, team: 1, x: 10, z: 20, vx: -4, vz: 312.25 }] }]
     const c = decodeChunk(encodeChunk(600, 1200, samples, projectiles))
     expect([c.frameStart, c.frameEnd]).toEqual([600, 1200])
-    expect(c.samples.map((s) => s.frame)).toEqual([600, 615, 630, 645])
+    expect(c.samples.map((s) => s.frame)).toEqual([600, 615, 630, 645, 660])
     samples.forEach((s, i) => {
       expect(c.samples[i].n).toBe(s.units.length)
       for (const unit of s.units) expect(unitAt(c.samples[i], unit.uid)).toEqual(unit)
     })
     expect(c.projectiles[0]).toMatchObject({ frame: 605, n: 1 })
-    expect([c.projectiles[0].weapon[0], c.projectiles[0].vx[0], c.projectiles[0].vz[0]]).toEqual([3, -4, 12])
+    expect([c.projectiles[0].weapon[0], c.projectiles[0].vx[0], c.projectiles[0].vz[0]]).toEqual([3, -4, 312.25])
   })
 })
 
@@ -88,6 +101,50 @@ F 45 3
 E 45 O 0
 DONE gameover 45
 `
+
+describe('convertRaw v2', () => {
+  it('reads work tasks and weapon colors', async () => {
+    const raw = join(tmp, 'raw2.txt')
+    const defs = join(tmp, 'defs2.txt')
+    writeFileSync(
+      raw,
+      [
+        'BRVRAW 2',
+        'H interval=15 projInterval=5 mapX=4096 mapZ=4096 gaia=1 engine=e game=g map=m',
+        'T 0 0 255 0 0 0 armada A',
+        'T 1 1 9 9 9 0 - Gaia',
+        'E 0 C 100 5 0 -1',
+        'F 0 1',
+        '100 5 0 1000 1000 50 0 3000 3000 100 3 1200 1300', // reclaiming at 1200,1300
+        'F 15 1',
+        '100 5 0 1000 1000 50 0 3000 3000 100 0',
+        'DONE gameover 15',
+        ''
+      ].join('\n')
+    )
+    writeFileSync(
+      defs,
+      'BRVDEFS 2\nU 5 armcom 6 6 0 0 0 1 2700 26000 3700 37.5 armcom Armada Commander\nW 4 armcom_laser BeamLaser 300 255 0 128 2.5 Laser\n'
+    )
+    const out = join(tmp, 'v2.brvs')
+    await convertRaw({ rawPath: raw, unitDefsPath: defs, outPath: out, gameId: 'v2', chat: [] })
+    const s = openStream(out)
+    const [a, b] = s.chunk(0).samples
+    expect([a.work[0], a.wx[0], a.wz[0]]).toEqual([3, 1200, 1300])
+    expect(b.work[0]).toBe(0)
+    expect(s.header.formatVersion).toBe(2)
+  })
+
+  it('parses weapon visuals from BRVDEFS 2', async () => {
+    const { parseUnitDefs } = await import('../src/main/stream/convert')
+    expect(parseUnitDefs('BRVDEFS 2\nW 4 armcom_laser BeamLaser 300 255 0 128 2.5 Laser\n').weapons.get(4)).toEqual({
+      name: 'armcom_laser',
+      type: 'BeamLaser',
+      color: '#ff0080',
+      size: 2.5
+    })
+  })
+})
 
 describe('convertRaw', () => {
   it('converts a synthetic recording, keeping unit identity across id reuse', async () => {
@@ -129,7 +186,7 @@ describe('convertRaw', () => {
     const death = s.meta.events.find((e) => e[1] === EVENT_DEATH)!
     expect(death).toEqual([20, EVENT_DEATH, corakUid, 6, 1, c0.samples[0].uid[0], 3000, 3000])
     expect(c0.projectiles[0]).toMatchObject({ frame: 15, n: 1 })
-    expect(c0.projectiles[0].vx[0]).toBe(6) // 5.5 rounded
+    expect(c0.projectiles[0].vx[0]).toBe(5.5) // v2 keeps quarter-elmo precision
     // stats at frames 0 and 30: army counts finished mobile units only (solar is a building)
     expect(s.meta.stats.teams[0].army).toEqual([2700, 2700])
     expect(s.meta.stats.teams[0].units).toEqual([1, 2])

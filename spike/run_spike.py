@@ -35,7 +35,8 @@ def main():
     # isolated write dir with our widget pre-enabled
     os.makedirs(os.path.join(work, "LuaUI", "Widgets"), exist_ok=True)
     os.makedirs(os.path.join(work, "LuaUI", "Config"), exist_ok=True)
-    shutil.copy(os.path.join(HERE, "widget", "brv_spike.lua"), os.path.join(work, "LuaUI", "Widgets"))
+    widget_src = os.environ.get("SPIKE_WIDGET", os.path.join(HERE, "widget", "brv_spike.lua"))
+    shutil.copy(widget_src, os.path.join(work, "LuaUI", "Widgets", "brv_spike.lua"))
     with open(os.path.join(work, "LuaUI", "Config", "BYAR.lua"), "w") as f:
         f.write('return { allowUserWidgets = true, order = { ["BRV Spike"] = 1 }, data = {} }\n')
     cfg = os.path.join(work, "springsettings.cfg")

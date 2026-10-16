@@ -23,7 +23,9 @@ import {
   type TeamStats,
   type UnitDefInfo,
   type UnitKind,
-  type UnitState
+  type UnitState,
+  type WeaponDefInfo,
+  FORMAT_VERSION
 } from '@shared/stream/format'
 
 export const DEFAULT_KEYFRAME_INTERVAL = 600 // 20 s
@@ -55,12 +57,14 @@ export function compress(data: Uint8Array): Uint8Array {
 
 interface RawDefs {
   units: Map<number, UnitDefInfo>
-  weapons: Map<number, { name: string; type: string }>
+  weapons: Map<number, WeaponDefInfo>
 }
 
+/** BRVDEFS v1 or v2 (v2 adds the weapon visual color and size). */
 export function parseUnitDefs(text: string): RawDefs {
   const units = new Map<number, UnitDefInfo>()
-  const weapons = new Map<number, { name: string; type: string }>()
+  const weapons = new Map<number, WeaponDefInfo>()
+  const v2 = text.startsWith('BRVDEFS 2')
   for (const line of text.split(/\r?\n/)) {
     const f = line.split(' ')
     if (f[0] === 'U' && f.length >= 15) {
@@ -79,7 +83,12 @@ export function parseUnitDefs(text: string): RawDefs {
         iconType
       })
     } else if (f[0] === 'W' && f.length >= 4) {
-      weapons.set(Number(f[1]), { name: f[2], type: f[3] })
+      const w: WeaponDefInfo = { name: f[2], type: f[3] }
+      if (v2 && f.length >= 9) {
+        w.color = hexColor(Number(f[5]), Number(f[6]), Number(f[7]))
+        w.size = Number(f[8])
+      }
+      weapons.set(Number(f[1]), w)
     }
   }
   return { units, weapons }
@@ -180,7 +189,7 @@ export async function convertRaw(input: ConvertInput): Promise<ConvertResult> {
   }
 
   const first = await next()
-  if (!first?.startsWith('BRVRAW 1')) throw new Error('Not a BRVRAW v1 recording')
+  if (!first || !/^BRVRAW [12]$/.test(first.trim())) throw new Error('Not a BRVRAW v1/v2 recording')
 
   for (let line = await next(); line !== undefined; line = await next()) {
     if (line.length === 0) continue
@@ -226,7 +235,11 @@ export async function convertRaw(input: ConvertInput): Promise<ConvertResult> {
             z: clampU16(Number(u[4])),
             heading: heading8(Number(u[6])),
             hp: maxHp > 0 ? Math.max(0, Math.min(255, Math.round((Number(u[7]) / maxHp) * 255))) : 255,
-            build: Math.max(0, Math.min(100, Number(u[9])))
+            build: Math.max(0, Math.min(100, Number(u[9]))),
+            // raw v2: work kind + target position (absent / 0 in v1)
+            work: Number(u[10] ?? 0) || 0,
+            wx: u[10] && u[10] !== '0' ? clampU16(Number(u[11])) : 0,
+            wz: u[10] && u[10] !== '0' ? clampU16(Number(u[12])) : 0
           })
         }
         units.sort((a, b) => a.uid - b.uid)
@@ -324,7 +337,7 @@ export async function convertRaw(input: ConvertInput): Promise<ConvertResult> {
       iconType: 'default'
     }
   }
-  const weaponDefs: Record<number, { name: string; type: string }> = {}
+  const weaponDefs: Record<number, WeaponDefInfo> = {}
   for (const id of usedWeapons) weaponDefs[id] = defs.weapons.get(id) ?? { name: `weapon${id}`, type: 'unknown' }
 
   const meta: StreamMeta = {
@@ -337,7 +350,7 @@ export async function convertRaw(input: ConvertInput): Promise<ConvertResult> {
     stats: { interval: STATS_INTERVAL, teams: stats }
   }
   const header: Omit<StreamHeader, 'meta' | 'chunks'> = {
-    formatVersion: 1,
+    formatVersion: FORMAT_VERSION,
     gameId: input.gameId,
     mapName: (hdr.map ?? '').replace(/_/g, ' '),
     mapSizeX: Number(hdr.mapX ?? 0),

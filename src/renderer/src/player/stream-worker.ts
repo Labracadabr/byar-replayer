@@ -31,9 +31,9 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     } else if (msg.type === 'chunk') {
       if (!header) throw new Error('stream not open')
       const ref = header.chunks[msg.index]
-      const chunk = decodeChunk(blob(ref.offset, ref.length))
+      const chunk = decodeChunk(blob(ref.offset, ref.length), header.formatVersion)
       const transfer: Transferable[] = []
-      for (const s of chunk.samples) transfer.push(s.uid.buffer, s.def.buffer, s.team.buffer, s.x.buffer, s.z.buffer, s.heading.buffer, s.hp.buffer, s.build.buffer)
+      for (const s of chunk.samples) transfer.push(s.uid.buffer, s.def.buffer, s.team.buffer, s.x.buffer, s.z.buffer, s.heading.buffer, s.hp.buffer, s.build.buffer, s.work.buffer, s.wx.buffer, s.wz.buffer)
       for (const p of chunk.projectiles) transfer.push(p.weapon.buffer, p.team.buffer, p.x.buffer, p.z.buffer, p.vx.buffer, p.vz.buffer)
       post({ type: 'chunk', index: msg.index, chunk }, transfer)
     }

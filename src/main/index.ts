@@ -4,6 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type { ReplayDeps, Settings, SettingsState } from '@shared/types'
 import { openDb, type Db } from './db'
 import { DepsResolver } from './deps/resolver'
+import { readDemoTimeline } from './demo-meta'
 import { Library } from './library'
 import { handleProtocol, registerSchemePrivileges } from './protocol'
 import { SettingsStore } from './settings'
@@ -77,6 +78,11 @@ function registerIpc(): void {
   })
   ipcMain.handle('library:list', () => (library ? library.list() : []))
   ipcMain.handle('library:get', (_e, id: number) => requireLibrary().get(id))
+  ipcMain.handle('library:timeline', async (_e, id: number) => {
+    const r = requireLibrary().get(id)
+    if (!r) throw new Error(`Unknown replay ${id}`)
+    return readDemoTimeline(r.path)
+  })
   ipcMain.handle('library:setFavorite', (_e, id: number, fav: boolean) => requireLibrary().setFavorite(id, fav))
   ipcMain.handle('library:setNote', (_e, id: number, note: string) => requireLibrary().setNote(id, note))
   ipcMain.handle('library:rescan', () => requireLibrary().scan())

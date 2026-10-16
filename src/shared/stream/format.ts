@@ -3,7 +3,17 @@
 import { ByteReader, ByteWriter } from './bytes'
 
 export const MAGIC = 'BRVS'
-export const FORMAT_VERSION = 1
+/** v2: unit work tasks (build power lines), projectile velocities as varints (beams need > ±127) */
+export const FORMAT_VERSION = 2
+export const SUPPORTED_VERSIONS = [1, 2]
+
+/** What a builder spends build power on (UnitState.work) */
+export const WORK_NONE = 0
+export const WORK_BUILD = 1
+export const WORK_REPAIR = 2
+export const WORK_RECLAIM = 3
+export const WORK_RESURRECT = 4
+export const WORK_CAPTURE = 5
 
 export type Decompress = (data: Uint8Array) => Uint8Array
 
@@ -92,11 +102,20 @@ export interface TeamStats {
   army: number[]
 }
 
+export interface WeaponDefInfo {
+  name: string
+  /** engine weapon type: Cannon, LaserCannon, BeamLaser, MissileLauncher, StarburstLauncher, AircraftBomb, Flame, ... */
+  type: string
+  /** visual color #rrggbb (v2 recordings) */
+  color?: string
+  size?: number
+}
+
 export interface StreamMeta {
   teams: TeamInfo[]
   winners: number[]
   unitDefs: Record<number, UnitDefInfo>
-  weaponDefs: Record<number, { name: string; type: string }>
+  weaponDefs: Record<number, WeaponDefInfo>
   events: StreamEvent[]
   chat: ChatLine[]
   /** sampled every `interval` frames starting at frame 0 */
@@ -113,6 +132,10 @@ export interface UnitState {
   heading: number
   hp: number
   build: number
+  /** WORK_* kind, and the target position while working (0 when idle) */
+  work: number
+  wx: number
+  wz: number
 }
 
 export interface ProjectileState {
@@ -120,7 +143,7 @@ export interface ProjectileState {
   team: number
   x: number
   z: number
-  /** elmos per frame, for extrapolating between samples */
+  /** elmos per frame, for extrapolating between samples; for beams the whole beam vector */
   vx: number
   vz: number
 }
@@ -147,6 +170,9 @@ export interface Sample {
   heading: Uint8Array
   hp: Uint8Array
   build: Uint8Array
+  work: Uint8Array
+  wx: Uint16Array
+  wz: Uint16Array
 }
 
 export interface ProjectileSample {
@@ -156,8 +182,8 @@ export interface ProjectileSample {
   team: Uint8Array
   x: Uint16Array
   z: Uint16Array
-  vx: Int8Array
-  vz: Int8Array
+  vx: Float32Array
+  vz: Float32Array
 }
 
 export interface DecodedChunk {
@@ -173,6 +199,15 @@ const M_HP = 4
 const M_BUILD = 8
 const M_TEAM = 16
 const M_DEF = 32
+const M_WORK = 64
+
+function writeWork(w: ByteWriter, u: UnitState): void {
+  w.u8(u.work)
+  if (u.work) {
+    w.u16(u.wx)
+    w.u16(u.wz)
+  }
+}
 
 function writeUnit(w: ByteWriter, u: UnitState): void {
   w.varint(u.def)
@@ -182,6 +217,7 @@ function writeUnit(w: ByteWriter, u: UnitState): void {
   w.u8(u.heading)
   w.u8(u.hp)
   w.u8(u.build)
+  writeWork(w, u)
 }
 
 /** Encodes the samples of one chunk: the first sample is a full keyframe, the rest are deltas. */
@@ -231,7 +267,10 @@ export function encodeChunk(
             pu.hp !== cu.hp ||
             pu.build !== cu.build ||
             pu.team !== cu.team ||
-            pu.def !== cu.def
+            pu.def !== cu.def ||
+            pu.work !== cu.work ||
+            pu.wx !== cu.wx ||
+            pu.wz !== cu.wz
           )
             changed.push([pu, cu])
           a++
@@ -263,6 +302,7 @@ export function encodeChunk(
         if (p.build !== c.build) mask |= M_BUILD
         if (p.team !== c.team) mask |= M_TEAM
         if (p.def !== c.def) mask |= M_DEF
+        if (p.work !== c.work || p.wx !== c.wx || p.wz !== c.wz) mask |= M_WORK
         w.u8(mask)
         if (mask & M_POS) {
           w.svarint(c.x - p.x)
@@ -273,6 +313,7 @@ export function encodeChunk(
         if (mask & M_BUILD) w.u8(c.build)
         if (mask & M_TEAM) w.varint(c.team)
         if (mask & M_DEF) w.varint(c.def)
+        if (mask & M_WORK) writeWork(w, c)
       }
     }
     prev = s.units
@@ -288,8 +329,8 @@ export function encodeChunk(
       w.varint(p.team + 1)
       w.u16(p.x)
       w.u16(p.z)
-      w.i8(p.vx)
-      w.i8(p.vz)
+      w.svarint(Math.round(p.vx * 4)) // quarter-elmo steps; beams are hundreds of elmos long
+      w.svarint(Math.round(p.vz * 4))
     }
   }
   return w.finish()
@@ -306,11 +347,25 @@ function allocSample(frame: number, n: number): Sample {
     z: new Uint16Array(n),
     heading: new Uint8Array(n),
     hp: new Uint8Array(n),
-    build: new Uint8Array(n)
+    build: new Uint8Array(n),
+    work: new Uint8Array(n),
+    wx: new Uint16Array(n),
+    wz: new Uint16Array(n)
   }
 }
 
-function readUnitInto(r: ByteReader, s: Sample, i: number, uid: number): void {
+function readWork(r: ByteReader, s: Sample, i: number): void {
+  s.work[i] = r.u8()
+  if (s.work[i]) {
+    s.wx[i] = r.u16()
+    s.wz[i] = r.u16()
+  } else {
+    s.wx[i] = 0
+    s.wz[i] = 0
+  }
+}
+
+function readUnitInto(r: ByteReader, s: Sample, i: number, uid: number, version: number): void {
   s.uid[i] = uid
   s.def[i] = r.varint()
   s.team[i] = r.varint()
@@ -319,6 +374,7 @@ function readUnitInto(r: ByteReader, s: Sample, i: number, uid: number): void {
   s.heading[i] = r.u8()
   s.hp[i] = r.u8()
   s.build[i] = r.u8()
+  if (version >= 2) readWork(r, s, i)
 }
 
 function copyUnit(from: Sample, i: number, to: Sample, j: number): void {
@@ -330,10 +386,13 @@ function copyUnit(from: Sample, i: number, to: Sample, j: number): void {
   to.heading[j] = from.heading[i]
   to.hp[j] = from.hp[i]
   to.build[j] = from.build[i]
+  to.work[j] = from.work[i]
+  to.wx[j] = from.wx[i]
+  to.wz[j] = from.wz[i]
 }
 
-/** Decodes a (decompressed) chunk into full per-sample unit tables. */
-export function decodeChunk(data: Uint8Array): DecodedChunk {
+/** Decodes a (decompressed) chunk into full per-sample unit tables. `version` is the file's format version. */
+export function decodeChunk(data: Uint8Array, version: number = FORMAT_VERSION): DecodedChunk {
   const r = new ByteReader(data)
   const frameStart = r.varint()
   const frameEnd = frameStart + r.varint()
@@ -348,7 +407,7 @@ export function decodeChunk(data: Uint8Array): DecodedChunk {
       let uid = 0
       for (let i = 0; i < n; i++) {
         uid += r.varint()
-        readUnitInto(r, s, i, uid)
+        readUnitInto(r, s, i, uid, version)
       }
       samples.push(s)
       continue
@@ -361,7 +420,7 @@ export function decodeChunk(data: Uint8Array): DecodedChunk {
     const nAdded = r.varint()
     const added = allocSample(frame, nAdded)
     uid = 0
-    for (let i = 0; i < nAdded; i++) readUnitInto(r, added, i, (uid += r.varint()))
+    for (let i = 0; i < nAdded; i++) readUnitInto(r, added, i, (uid += r.varint()), version)
     // merge prev (minus removed) with added, both sorted by uid
     const s = allocSample(frame, prev.n - nRemoved + nAdded)
     let a = 0
@@ -395,6 +454,7 @@ export function decodeChunk(data: Uint8Array): DecodedChunk {
       if (mask & M_BUILD) s.build[idx] = r.u8()
       if (mask & M_TEAM) s.team[idx] = r.varint()
       if (mask & M_DEF) s.def[idx] = r.varint()
+      if (mask & M_WORK) readWork(r, s, idx)
     }
     samples.push(s)
   }
@@ -411,16 +471,21 @@ export function decodeChunk(data: Uint8Array): DecodedChunk {
       team: new Uint8Array(n),
       x: new Uint16Array(n),
       z: new Uint16Array(n),
-      vx: new Int8Array(n),
-      vz: new Int8Array(n)
+      vx: new Float32Array(n),
+      vz: new Float32Array(n)
     }
     for (let i = 0; i < n; i++) {
       p.weapon[i] = r.varint() - 1
       p.team[i] = r.varint() - 1
       p.x[i] = r.u16()
       p.z[i] = r.u16()
-      p.vx[i] = r.i8()
-      p.vz[i] = r.i8()
+      if (version >= 2) {
+        p.vx[i] = r.svarint() / 4
+        p.vz[i] = r.svarint() / 4
+      } else {
+        p.vx[i] = r.i8()
+        p.vz[i] = r.i8()
+      }
     }
     projectiles.push(p)
   }
@@ -444,7 +509,7 @@ export function buildFile(header: Omit<StreamHeader, 'meta' | 'chunks'>, meta: U
   const pre = new Uint8Array(12)
   pre.set(enc.encode(MAGIC), 0)
   const dv = new DataView(pre.buffer)
-  dv.setUint32(4, FORMAT_VERSION, true)
+  dv.setUint32(4, header.formatVersion, true)
   dv.setUint32(8, json.length, true)
   return [pre, json, meta, ...chunks.map((c) => c.data)]
 }
@@ -454,7 +519,8 @@ export function readHeader(prefix: Uint8Array): { header: StreamHeader; dataStar
   if (prefix.length < 12 || dec.decode(prefix.subarray(0, 4)) !== MAGIC) throw new Error('Not a BRVS stream file')
   const dv = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength)
   const version = dv.getUint32(4, true)
-  if (version !== FORMAT_VERSION) throw new Error(`Unsupported stream format version ${version}`)
+  if (!SUPPORTED_VERSIONS.includes(version))
+    throw new Error(`Unsupported stream format version ${version}: re-simulate the replay with this app version`)
   const len = dv.getUint32(8, true)
   if (prefix.length < 12 + len) throw new RangeError(`header needs ${12 + len} bytes`)
   return { header: JSON.parse(dec.decode(prefix.subarray(12, 12 + len))) as StreamHeader, dataStart: 12 + len }
